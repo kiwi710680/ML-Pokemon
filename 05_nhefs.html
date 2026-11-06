@@ -296,8 +296,7 @@ forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", co
 </script></div></details>
 
 <table class="map"><tr><th>格</th><th>Karim (2026) 的步驟</th><th>投影片</th></tr><tr><td>01–02</td><td>Step 0：固定題目；看兩組差在哪</td><td>56–59</td></tr><tr><td>03–04</td><td>Step 1：先診斷 overlap 與 balance，再選 estimator</td><td>66、75、91</td></tr><tr><td>05–07</td><td>Step 2–4：共用 nuisance，full sample vs cross-fit</td><td>77–82、92–93</td></tr><tr><td>08–10</td><td>Step 6：敏感度（截斷、learner、切分）</td><td>85、91</td></tr></table>
-<div class="note note"><p><b>一家人怎麼分？</b>兩個問題就分完了：(1) 怎麼把 EIF 變成一個數字——加回去（AIPW 家族）或推 Q̂（TMLE 家族）；(2) nuisance 怎麼訓練——full sample、cross-fit、double cross-fit。AIPW + cross-fit = DML，TMLE + cross-fit = CV-TMLE（投影片 92 那張 2×3 表）。</p>
-</div>
+<div class="note note"><p><b>一家人怎麼分？</b>兩個問題就分完了：(1) 怎麼把 EIF 變成一個數字——加回去（AIPW 家族）或推 Q̂（TMLE 家族）；(2) nuisance 怎麼訓練——full sample、cross-fit、double cross-fit。AIPW + cross-fit = DML，TMLE + cross-fit = CV-TMLE（投影片 92 那張 2×3 表）。</p></div>
 <h2><span class="n">01</span>資料與問題<span class="slide">投影片 56–57</span></h2>
 <p>A = 1971–1982 間戒菸（qsmk），Y = 同期間體重變化（kg），X = 性別、種族、年齡、教育、吸菸強度、菸齡、運動、活動量、1971 年體重。只用 Y 沒缺的 1,566 人（complete case），所以 estimand 是「這 1,566 人」的 ATE，不是全美國人。</p>
 <div class="cell"><script type="text/r">
