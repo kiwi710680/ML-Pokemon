@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 8　LaLonde：當橋不存在</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="web/style.css?v=8">
+<script type="importmap">
+{
+ "imports": {
+  "@codemirror/state": "https://esm.sh/*@codemirror/state@6.4.1",
+  "@codemirror/view": "https://esm.sh/*@codemirror/view@6.26.3",
+  "@codemirror/language": "https://esm.sh/*@codemirror/language@6.10.1",
+  "@codemirror/commands": "https://esm.sh/*@codemirror/commands@6.5.0",
+  "@codemirror/legacy-modes/mode/r": "https://esm.sh/*@codemirror/legacy-modes@6.4.0/mode/r",
+  "@lezer/common": "https://esm.sh/*@lezer/common@1.2.1",
+  "@lezer/highlight": "https://esm.sh/*@lezer/highlight@1.2.0",
+  "@lezer/lr": "https://esm.sh/*@lezer/lr@1.4.0",
+  "style-mod": "https://esm.sh/*style-mod@4.1.2",
+  "w3c-keyname": "https://esm.sh/*w3c-keyname@2.2.8"
+ }
+}
+</script>
+</head>
+<body data-files="data/lalonde/nswre74_treated.txt,data/lalonde/nswre74_control.txt,data/lalonde/psid_controls.txt" data-packages="randomForest">
+<header class="top"><div class="wrap">
+  <a class="home" href="index.html">Pokémon-CP Lab</a>
+  <nav class="labs"><a href="01_ml.html">1 找函式</a><a href="02_plugin.html">2 plug-in</a><a href="03_eif.html">3 EIF 修正</a><a href="04_remainder.html">4 剩下什麼</a><a href="05_nhefs.html">5 NHEFS</a><a href="06_rhc.html">6 RHC</a><a href="07_ihdp.html">7 IHDP</a><a href="08_lalonde.html" aria-current="page">8 LaLonde</a></nav>
+  <span id="status">準備中…</span>
+</div></header>
+<main>
+<p class="kicker">Lab 8　LaLonde</p>
+<h1>當橋不存在</h1>
+<p class="lead">職業訓練能讓收入增加多少？同一批受訓者，配上兩種對照組：一種是隨機分派沒被選上的人（實驗），一種是從一般族群 PSID 抓來的人（觀察）。實驗給了一個基準答案；觀察資料上，所有估計器會怎樣？這是 Lab 4 第 06 格 positivity 旋鈕轉到底的真實版本。</p>
+<div class="actions"><button id="runall" disabled>▶ 全部執行</button><span class="time">第一次要裝 randomForest；全部約 1 分鐘</span>
+<a class="colab" href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/08_lalonde.ipynb" target="_blank" rel="noopener">在 Colab 開啟</a>
+<a class="dl" href="colab/08_lalonde.ipynb" download>下載 .ipynb</a></div>
+<details class="toolbox"><summary>工具箱：這一頁用到的 R 函式（會自動先執行；點開可以看每一行）</summary>
+<div class="cell" data-label="工具箱"><script type="text/r">
+# ---- estimators: one set of nuisance predictions -> different answers ----
+# Notation (same as the slides): O = (X, A, Y)
+#   Q(a, X) = E[Y | A = a, X]            outcome regression   -> nu$Q1, nu$Q0
+#   g(X)    = P(A = 1 | X)               propensity score     -> nu$g
+#   H(A, X) = A / g - (1 - A) / (1 - g)  clever covariate
+#   D(O; g, Q, psi) = H (Y - Q_A) + Q1 - Q0 - psi   efficient influence function of the ATE
+expit <- function(x) 1 / (1 + exp(-x))
+bound <- function(p, lo = 0.025, hi = 0.975) pmin(pmax(p, lo), hi)
+
+est_plugin <- function(nu) mean(nu$Q1 - nu$Q0)               # g-computation: predict twice, subtract, average
+
+est_ipw_ht <- function(dat, nu)                               # Horvitz-Thompson IPTW: divide by n
+  mean(dat$A * dat$Y / nu$g - (1 - dat$A) * dat$Y / (1 - nu$g))
+
+est_ipw <- function(dat, nu) {                                # Hajek (stabilized) IPTW: divide by the sum of weights
+  w1 <- dat$A / nu$g; w0 <- (1 - dat$A) / (1 - nu$g)
+  sum(w1 * dat$Y) / sum(w1) - sum(w0 * dat$Y) / sum(w0)
+}
+
+eif <- function(dat, nu, psi) {
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  QA <- ifelse(dat$A == 1, nu$Q1, nu$Q0)
+  H * (dat$Y - QA) + nu$Q1 - nu$Q0 - psi
+}
+
+wald <- function(psi, D) {                                    # SE from the EIF: sqrt(mean(D^2) / n)
+  se <- sqrt(mean(D^2) / length(D))
+  c(est = psi, se = se, lo = psi - 1.96 * se, hi = psi + 1.96 * se)
+}
+
+est_aipw <- function(dat, nu) {                               # one-step: psi_plug + P_n D  (solves P_n D = 0)
+  psi <- mean(eif(dat, nu, 0))
+  wald(psi, eif(dat, nu, psi))
+}
+
+est_tmle <- function(dat, nu, ybounds = range(dat$Y)) {       # targeting: move Q-hat along H until P_n D = 0
+  lo <- ybounds[1]; hi <- ybounds[2]
+  sc <- function(y) pmin(pmax((y - lo) / (hi - lo), 1e-6), 1 - 1e-6)
+  Ys <- (dat$Y - lo) / (hi - lo)
+  Q1s <- sc(nu$Q1); Q0s <- sc(nu$Q0); QAs <- ifelse(dat$A == 1, Q1s, Q0s)
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  fl <- suppressWarnings(glm(Ys ~ -1 + H, offset = qlogis(QAs), family = quasibinomial()))
+  eps <- unname(coef(fl))
+  Q1t <- expit(qlogis(Q1s) + eps / nu$g)
+  Q0t <- expit(qlogis(Q0s) - eps / (1 - nu$g))
+  nu_t <- data.frame(Q1 = lo + (hi - lo) * Q1t, Q0 = lo + (hi - lo) * Q0t, g = nu$g)
+  psi <- mean(nu_t$Q1 - nu_t$Q0)
+  c(wald(psi, eif(dat, nu_t, psi)), eps = eps)
+}
+
+weight_summary <- function(dat, nu) {                         # largest weight and effective sample size (ESS)
+  w <- ifelse(dat$A == 1, 1 / nu$g, 1 / (1 - nu$g))
+  c(max_weight = max(w),
+    ESS_treated = sum(w[dat$A == 1])^2 / sum(w[dat$A == 1]^2), n_treated = sum(dat$A),
+    ESS_control = sum(w[dat$A == 0])^2 / sum(w[dat$A == 0]^2), n_control = sum(1 - dat$A))
+}
+
+# ---- real data: loaders return list(name, X, A, Y, binary) ----
+load_rhc <- function(path = "data/rhc.csv") {
+  d <- read.csv(path, stringsAsFactors = TRUE)
+  d[[1]] <- NULL                                              # first column is a row number
+  A <- as.integer(d$swang1 == "RHC"); Y <- as.integer(d$dth30 == "Yes")
+  drop <- c("swang1", "death", "dth30", "sadmdte", "dschdte", "dthdte", "lstctdte",   # same drop list as Karim (2026)
+            "t3d30", "ptid", "cat2", "adld3p", "urin1")
+  covs <- droplevels(d[, setdiff(names(d), drop), drop = FALSE])
+  X <- as.data.frame(model.matrix(~ . - 1, data = covs))
+  colnames(X) <- make.names(colnames(X), unique = TRUE)
+  list(name = "RHC", X = X, A = A, Y = Y, binary = TRUE)
+}
+load_ihdp <- function(r = 1, dir = "data/ihdp") {
+  d <- read.csv(file.path(dir, sprintf("ihdp_npci_%d.csv", r)), header = FALSE)
+  names(d) <- c("treatment", "y_factual", "y_cfactual", "mu0", "mu1", paste0("x", 1:25))
+  list(name = sprintf("IHDP #%d", r), X = d[, paste0("x", 1:25)], A = d$treatment, Y = d$y_factual,
+       binary = FALSE, truth = mean(d$mu1 - d$mu0), mu0 = d$mu0, mu1 = d$mu1)
+}
+read_nsw <- function(file) {
+  d <- read.table(file, header = FALSE)
+  names(d) <- c("treat", "age", "educ", "black", "hisp", "married", "nodegree", "re74", "re75", "re78")
+  d
+}
+load_lalonde <- function(setting = c("psid", "experimental"), dir = "data/lalonde") {
+  setting <- match.arg(setting)
+  tr <- read_nsw(file.path(dir, "nswre74_treated.txt")); ct <- read_nsw(file.path(dir, "nswre74_control.txt"))
+  benchmark <- mean(tr$re78) - mean(ct$re78)                   # randomized: the simple difference is the answer
+  d <- if (setting == "experimental") rbind(tr, ct) else rbind(tr, read_nsw(file.path(dir, "psid_controls.txt")))
+  covs <- c("age", "educ", "black", "hisp", "married", "nodegree", "re74", "re75")
+  list(name = paste0("LaLonde (", setting, ")"), X = d[, covs], A = d$treat, Y = d$re78, binary = FALSE, benchmark = benchmark)
+}
+
+# ---- learners: "glm" (main effects) or "rf" (random forest) ----
+learn_g <- function(X, A, newX, learner = "glm", ntree = 100) {
+  if (learner == "glm") {
+    fit <- suppressWarnings(glm(A ~ ., data = data.frame(A = A, X), family = binomial))
+    return(unname(suppressWarnings(predict(fit, newX, type = "response"))))
+  }
+  fit <- randomForest::randomForest(x = X, y = factor(A, levels = 0:1), ntree = ntree)
+  unname(predict(fit, newX, type = "prob")[, "1"])
+}
+learn_Q <- function(X, A, Y, newX, binary, learner = "glm", ntree = 100) {
+  tr <- data.frame(A = A, X); n1 <- data.frame(A = 1, newX); n0 <- data.frame(A = 0, newX)
+  if (learner == "glm") {
+    fit <- if (binary) suppressWarnings(glm(Y ~ ., data = data.frame(Y = Y, tr), family = binomial))
+           else lm(Y ~ ., data = data.frame(Y = Y, tr))
+    pr <- function(nd) unname(suppressWarnings(predict(fit, nd, type = "response")))
+    return(list(Q1 = pr(n1), Q0 = pr(n0)))
+  }
+  if (binary) {
+    fit <- randomForest::randomForest(x = tr, y = factor(Y, levels = 0:1), ntree = ntree)
+    pr <- function(nd) unname(predict(fit, nd, type = "prob")[, "1"])
+  } else {
+    fit <- randomForest::randomForest(x = tr, y = Y, ntree = ntree)
+    pr <- function(nd) unname(predict(fit, nd))
+  }
+  list(Q1 = pr(n1), Q0 = pr(n0))
+}
+
+# full: train on everyone, predict the same people.  crossfit: each prediction comes from the other K - 1 folds
+nuisance <- function(d, learner = "glm", scheme = c("full", "crossfit"), K = 5, seed = 1,
+                     bounds = c(0.025, 0.975), ntree = 100) {
+  scheme <- match.arg(scheme)
+  n <- length(d$A)
+  set.seed(seed)
+  fold <- if (scheme == "full") rep(1L, n) else sample(rep(seq_len(K), length.out = n))
+  out <- data.frame(Q1 = numeric(n), Q0 = numeric(n), g_raw = numeric(n))
+  for (k in unique(fold)) {
+    te <- fold == k; tr <- if (scheme == "full") rep(TRUE, n) else !te
+    q <- learn_Q(d$X[tr, , drop = FALSE], d$A[tr], d$Y[tr], d$X[te, , drop = FALSE], d$binary, learner, ntree)
+    out$Q1[te] <- q$Q1; out$Q0[te] <- q$Q0
+    out$g_raw[te] <- learn_g(d$X[tr, , drop = FALSE], d$A[tr], d$X[te, , drop = FALSE], learner, ntree)
+  }
+  if (d$binary) { out$Q1 <- pmin(pmax(out$Q1, 0), 1); out$Q0 <- pmin(pmax(out$Q0, 0), 1) }
+  out$g <- pmin(pmax(out$g_raw, bounds[1]), bounds[2])
+  out$fold <- fold
+  out
+}
+
+panel <- function(d, nu, label = "") {                        # one set of nuisances -> four estimators
+  dd <- list(A = d$A, Y = d$Y)
+  a <- est_aipw(dd, nu); t <- est_tmle(dd, nu, ybounds = if (d$binary) c(0, 1) else range(d$Y))
+  data.frame(scheme = label, estimator = c("g-computation", "IPTW (Hajek)", "AIPW", "TMLE"),
+             est = c(est_plugin(nu), est_ipw(dd, nu), a[["est"]], t[["est"]]),
+             se = c(NA, NA, a[["se"]], t[["se"]]), lo = c(NA, NA, a[["lo"]], t[["lo"]]), hi = c(NA, NA, a[["hi"]], t[["hi"]]))
+}
+residual_check <- function(d, nu) {                           # is the learner grading its own exam?
+  QA <- ifelse(d$A == 1, nu$Q1, nu$Q0); H <- d$A / nu$g - (1 - d$A) / (1 - nu$g)
+  c(resid_rms = sqrt(mean((d$Y - QA)^2)), correction = mean(H * (d$Y - QA)))
+}
+
+# ---- diagnostics: overlap and balance ----
+smd <- function(x, A, w = rep(1, length(A))) {                # standardized mean difference
+  m1 <- weighted.mean(x[A == 1], w[A == 1]); m0 <- weighted.mean(x[A == 0], w[A == 0])
+  s <- sqrt((var(x[A == 1]) + var(x[A == 0])) / 2)
+  if (s == 0) 0 else (m1 - m0) / s
+}
+balance_table <- function(X, A, g) {
+  w <- ifelse(A == 1, 1 / g, 1 / (1 - g))
+  data.frame(variable = names(X), before = sapply(X, smd, A = A), after_IPW = sapply(X, smd, A = A, w = w), row.names = NULL)
+}
+overlap_summary <- function(g_raw, A, bounds = c(0.025, 0.975)) {
+  gb <- pmin(pmax(g_raw, bounds[1]), bounds[2]); w <- ifelse(A == 1, 1 / gb, 1 / (1 - gb))
+  c(min_g = min(g_raw), max_g = max(g_raw), pct_clipped = 100 * mean(g_raw < bounds[1] | g_raw > bounds[2]),
+    max_weight = max(w), ESS_treated = sum(w[A == 1])^2 / sum(w[A == 1]^2), ESS_control = sum(w[A == 0])^2 / sum(w[A == 0]^2))
+}
+
+# ---- plotting helpers (base graphics only) ----
+COL <- list(red = "#D9480F", teal = "#0B7285", ink = "#1C1B19", muted = "#6B665E",
+            gold = "#C98A0C", plum = "#7B3F8C", rule = "#DDD6CA")
+lab_par <- function(...) par(mar = c(4.5, 5, 1.5, 1), las = 1, bty = "n", col.axis = COL$muted, ...)
+
+overlap_plot <- function(g_raw, A, xlab = "estimated propensity score  g-hat(X)", labels = c("A = 1", "A = 0"), breaks = 40) {
+  br <- seq(0, 1, length.out = breaks + 1)                    # mirrored histogram: treated up, control down
+  h1 <- hist(pmin(pmax(g_raw[A == 1], 0), 1), breaks = br, plot = FALSE)$counts
+  h0 <- hist(pmin(pmax(g_raw[A == 0], 0), 1), breaks = br, plot = FALSE)$counts
+  lab_par()
+  plot(NA, xlim = c(0, 1), ylim = c(-max(h0), max(h1)), axes = FALSE, xlab = xlab, ylab = "count")
+  axis(1); yt <- pretty(c(-max(h0), max(h1))); axis(2, at = yt, labels = abs(yt))
+  rect(br[-length(br)], 0, br[-1], h1, col = adjustcolor(COL$red, .8), border = "white")
+  rect(br[-length(br)], 0, br[-1], -h0, col = adjustcolor(COL$teal, .8), border = "white")
+  abline(h = 0)
+  text(0.98, max(h1) * .85, labels[1], adj = 1, col = COL$red, font = 2)
+  text(0.98, -max(h0) * .85, labels[2], adj = 1, col = COL$teal, font = 2)
+}
+
+forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", col = COL$ink, xlab = "estimate", xlim = NULL) {
+  n <- length(est); y <- n:1
+  rng <- range(c(est, lo, hi, ref), na.rm = TRUE)
+  if (is.null(xlim)) xlim <- rng + c(-1, 1) * diff(rng) * 0.08
+  op <- par(mar = c(4.5, min(22, max(8, 0.62 * max(nchar(lab)) + 1)), 1.5, 1), las = 1, bty = "n", col.axis = COL$muted)
+  on.exit(par(op))
+  plot(NA, xlim = xlim, ylim = c(0.5, n + 0.5), axes = FALSE, xlab = xlab, ylab = "")
+  abline(h = y, col = "#F0EBE3")
+  if (!is.null(ref)) {
+    abline(v = ref, lty = 2, col = COL$muted); pos <- (ref[1] - xlim[1]) / diff(xlim)
+    mtext(ref_lab, 3, at = ref[1], adj = if (pos > 0.7) 1 else if (pos < 0.3) 0 else 0.5, cex = .8, col = COL$muted)
+  }
+  ok <- !is.na(lo)
+  segments(lo[ok], y[ok], hi[ok], y[ok], lwd = 3, col = rep_len(col, n)[ok])
+  points(est, y, pch = 19, cex = 1.5, col = rep_len(col, n))
+  axis(1); axis(2, at = y, labels = lab, tick = FALSE, col.axis = COL$ink)
+}
+</script></div></details>
+
+<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01</td><td>隨機分派：直接相減就有答案</td><td>56–58</td></tr><tr><td>02–04</td><td>換成 PSID 對照：兩組差到不能比，propensity 幾乎分開</td><td>67、77、93</td></tr><tr><td>05–06</td><td>八個估計值各說各話；權重集中在少數人身上</td><td>67–68、84</td></tr><tr><td>07</td><td>trimming：答案變了，因為題目變了</td><td>56、58</td></tr></table>
+<div class="note note"><p>資料：LaLonde (1986) 的 NSW 職訓實驗，使用 Dehejia &amp; Wahba 整理的版本（users.nber.org/~rdehejia/data）：NSW 受訓者 185 人、NSW 隨機對照 260 人、PSID 對照 2,490 人。結果是 1978 年收入（美元），共變數：年齡、教育、黑人、西語裔、已婚、無學位、1974 與 1975 年收入。</p></div>
+<h2><span class="n">01</span>隨機分派：基準答案</h2>
+<div class="cell"><script type="text/r">
+ex <- load_lalonde("experimental")
+c(trainees = sum(ex$A), randomized_controls = sum(1 - ex$A), naive_difference = ex$benchmark,
+  regression_adjusted = unname(coef(lm(ex$Y ~ ex$A + as.matrix(ex$X)))[2]))
+</script></div>
+<div class="look"><b>看什麼：</b><p>隨機分派時，直接相減就是受訓者族群的效果：約 1,794 美元。加上共變數調整是 1,676，差不多——設計本身把兩組變得可以比。</p></div>
+<h2><span class="n">02</span>換成 PSID 對照組</h2>
+<div class="cell"><script type="text/r">
+d <- load_lalonde("psid")
+grp <- data.frame(mean_trainees = sapply(d$X[d$A == 1, ], mean), mean_PSID = sapply(d$X[d$A == 0, ], mean), SMD = sapply(d$X, smd, A = d$A))
+round(grp, 2)
+c(trainees = sum(d$A), PSID_controls = sum(1 - d$A), naive_difference = mean(d$Y[d$A == 1]) - mean(d$Y[d$A == 0]))
+</script></div>
+<div class="look"><b>看什麼：</b><p>受訓者的 1974、1975 年收入只有 PSID 的零頭，年輕、沒結婚、沒學位的比例高很多——SMD 動輒超過 1。直接相減變成 −15,205 美元：不是訓練害的，是兩群人根本不是同一種人。</p></div>
+<h2><span class="n">03</span>overlap：橋在哪裡？<span class="slide">投影片 93</span></h2>
+<div class="cell"><script type="text/r">
+nu <- nuisance(d, "glm", "crossfit", seed = 1)
+round(overlap_summary(nu$g_raw, d$A), 3)
+overlap_plot(nu$g_raw, d$A, labels = c("NSW trainees (185)", "PSID controls (2,490)"))
+</script></div>
+<div class="look"><b>看什麼：</b><p>大部分 PSID 對照的 ĝ 擠在 0 附近，受訓者分散在右邊——兩座山幾乎沒有交集。約 80% 的人 ĝ &lt; 0.025，被截斷規則碰到。這不是估計器的問題，是資料裡<b>根本沒有</b>「長得像受訓者、卻沒受訓」的人可以比。</p></div>
+<h2><span class="n">04</span>和 NHEFS 對照一下</h2>
+<table><tr><th></th><th>NHEFS（Lab 5）</th><th>LaLonde × PSID</th></tr><tr><td>ĝ 範圍</td><td>0.05–0.78</td><td>≈ 0–0.96</td></tr><tr><td>被截斷的比例</td><td>0%</td><td>約 80%</td></tr><tr><td>治療組有效樣本數 / 人數</td><td>約 326 / 403</td><td>約 36 / 185</td></tr></table>
+<p>有效樣本數（ESS）掉到 36：權重加總之後，185 個受訓者只相當於 36 個人的資訊量——少數幾個人扛著整個答案。</p>
+<h2><span class="n">05</span>八個估計值，各說各話<span class="slide">投影片 84</span></h2>
+<div class="cell"><script type="text/r">
+allp <- do.call(rbind, lapply(c("glm", "rf"), function(lr) do.call(rbind, lapply(c("full", "crossfit"), function(sc)
+  panel(d, nuisance(d, lr, sc, seed = 1, ntree = 100), paste(lr, sc))))))
+allp[, c("est", "lo", "hi")] <- round(allp[, c("est", "lo", "hi")]); allp$se <- round(allp$se)
+allp
+forest_plot(paste(allp$scheme, allp$estimator), allp$est, allp$lo, allp$hi, ref = ex$benchmark,
+            ref_lab = "experimental benchmark 1,794 (NSW population)", xlab = "difference in 1978 earnings (US$)",
+            col = ifelse(grepl("IPTW", allp$estimator), COL$gold, ifelse(grepl("full", allp$scheme), COL$red, COL$teal)))
+</script></div>
+<div class="look"><b>看什麼：</b><p>從 −14,000（IPTW）到 +800，AIPW 和 TMLE 在同一組 nuisance 下還能差 3,700–4,400 美元（GLM cross-fit：AIPW −12、TMLE −4,422）。RF full sample 的 CI 只有 ±300，又是「又錯、又很有自信」。Karim 的 Table 9 一樣：−733 到 −14,629。這時候「方法之間一致」完全不成立——這本身就是一個警訊。Moccia et al. (2024) 說 AIPW 在 near-positivity violation 下不穩，在這裡看得最清楚。</p></div>
+<details class="think"><summary>想一想：那 1,794 是不是這裡的真值？誰離它最近誰就對？</summary><p>不是。1,794 是 <b>NSW 受訓者族群</b>的效果（接近 ATT）。這裡估的是「受訓者 + PSID」合併族群的 ATE，那是另一個 estimand，大部分人是根本不會去參加職訓的一般人。1,794 只能當方向和量級的參考，不能拿來算 coverage（Karim 2026 也這樣提醒）。</p></details>
+<h2><span class="n">06</span>權重集中在誰身上？<span class="slide">投影片 67–68</span></h2>
+<div class="cell"><script type="text/r">
+w <- ifelse(d$A == 1, 1 / nu$g, 1 / (1 - nu$g))
+wt <- w[d$A == 1]
+c(max_trainee_weight = max(wt), n_at_cap = sum(wt >= 39.99),
+  top10_share_of_weight = sum(sort(wt, decreasing = TRUE)[1:10]) / sum(wt), ESS = sum(wt)^2 / sum(wt^2))
+par(mfrow = c(1, 2), mar = c(4.5, 4.5, 2.5, 1), las = 1, bty = "n")
+hist(log10(wt), breaks = 30, col = adjustcolor(COL$red, .7), border = "white", main = "trainee weights 1 / g-hat",
+     xaxt = "n", xlab = "weight (log scale; capped at 40)", ylab = "trainees")
+axis(1, at = log10(c(1, 2, 5, 10, 20, 40)), labels = c(1, 2, 5, 10, 20, 40))
+cs <- cumsum(sort(wt, decreasing = TRUE)) / sum(wt)            # cumulative share of total weight, heaviest first
+plot(seq_along(cs), cs, type = "s", lwd = 3, col = COL$red, ylim = c(0, 1),
+     xlab = "trainees, heaviest weight first", ylab = "share of total weight", main = "who carries the answer?")
+abline(0, 1 / length(cs), lty = 2, col = COL$muted)
+points(10, cs[10], pch = 19, cex = 1.6); text(10, cs[10], sprintf("  top 10 = %.0f%%", 100 * cs[10]), adj = 0)
+legend("bottomright", c("actual", "if every trainee counted equally"), lty = c(1, 2), lwd = c(3, 1), col = c(COL$red, COL$muted), bty = "n")
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>左圖：大部分受訓者的權重在 1–1.5 之間——他們的 ĝ 接近 0.9，一看就「不像 PSID 的人」。但最右邊有 6 個人 ĝ 掉到 0.025 以下，權重被截在上限 40——他們長得太像 PSID 的一般人，模型幾乎不相信他們會受訓。</li><li>右圖：<b>前 10 個人（185 人裡的 5%）扛了將近一半（約 49%）的總權重</b>，有效樣本數只剩 36。</li><li>這 10 個人 1978 年的收入多 1,000 或少 1,000，答案就跟著跑。AIPW 的修正項是「權重 × 殘差」，所以同樣受影響（Moccia et al. 2024：AIPW has the same weaknesses of IPW when it comes to positivity；投影片 77 的 V_eff 也說明了為什麼）。</li></ul></div>
+<h2><span class="n">07</span>Trimming：答案變了，因為題目變了<span class="slide">投影片 56、58</span></h2>
+<p>只保留 ĝ 在 [ε, 1 − ε] 的人，再做一次 cross-fit AIPW（= DML）。</p>
+<div class="cell"><script type="text/r">
+trim <- do.call(rbind, lapply(c(0, 0.05, 0.10), function(eps) {
+  keep <- nu$g_raw >= eps & nu$g_raw <= 1 - eps
+  dk <- list(X = d$X[keep, ], A = d$A[keep], Y = d$Y[keep], binary = FALSE)
+  a <- est_aipw(dk, nuisance(dk, "glm", "crossfit", seed = 1))
+  data.frame(rule = if (eps == 0) "keep all" else sprintf("keep g-hat in [%.2f, %.2f]", eps, 1 - eps),
+             n_kept = sum(keep), trainees_kept = sum(dk$A), share_kept = round(mean(keep), 2),
+             DML = round(a[["est"]]), lo = round(a[["lo"]]), hi = round(a[["hi"]]))
+}))
+trim
+</script></div>
+<div class="look"><b>看什麼：</b><p>修到 [0.05, 0.95] 只剩 420 人（16%），[0.10, 0.90] 剩 304 人（11%）——和 Karim 的 16%、11% 一樣。估計值跳到正的，CI 寬到 ±2,500–2,900。這不是「修好了原本的問題」：被丟掉的 84% 大部分是 PSID 的一般人，剩下的是「長得有點像受訓者」的子族群。estimand 從合併族群的 ATE 變成了 ψ<sub>ε</sub> = E[Q₁ − Q₀ | ε ≤ g ≤ 1−ε]。縮小題目可以是合理的選擇，但要明講。</p></div>
+<p class="punch">AIPW、TMLE、DML 像三條導航路線。跨河的橋不存在時，換導航 App 不會把橋生出來。</p>
+<p>positivity 有兩層：<b>識別</b>（資料裡有沒有可比的人）和 <b>precision</b>（有的話夠不夠多）。Lab 4 第 06 格是第二層；這裡是第一層壞掉的樣子。處理方式是回到設計：換對照組、重新定義目標族群（例如改估 ATT）、或明講外推的假設——不是換一個更厲害的 learner。</p>
+<nav class="pager"><a href="07_ihdp.html">← 7 IHDP</a><a href="index.html">回首頁 →</a></nav>
+</main>
+<script type="module" src="web/runner.js?v=8"></script>
+</body>
+</html>

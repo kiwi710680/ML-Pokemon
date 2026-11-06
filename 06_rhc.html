@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 6　RHC：learner 太會背答案的時候（二元結果）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="web/style.css?v=8">
+<script type="importmap">
+{
+ "imports": {
+  "@codemirror/state": "https://esm.sh/*@codemirror/state@6.4.1",
+  "@codemirror/view": "https://esm.sh/*@codemirror/view@6.26.3",
+  "@codemirror/language": "https://esm.sh/*@codemirror/language@6.10.1",
+  "@codemirror/commands": "https://esm.sh/*@codemirror/commands@6.5.0",
+  "@codemirror/legacy-modes/mode/r": "https://esm.sh/*@codemirror/legacy-modes@6.4.0/mode/r",
+  "@lezer/common": "https://esm.sh/*@lezer/common@1.2.1",
+  "@lezer/highlight": "https://esm.sh/*@lezer/highlight@1.2.0",
+  "@lezer/lr": "https://esm.sh/*@lezer/lr@1.4.0",
+  "style-mod": "https://esm.sh/*style-mod@4.1.2",
+  "w3c-keyname": "https://esm.sh/*w3c-keyname@2.2.8"
+ }
+}
+</script>
+</head>
+<body data-files="data/rhc.csv" data-packages="randomForest">
+<header class="top"><div class="wrap">
+  <a class="home" href="index.html">Pokémon-CP Lab</a>
+  <nav class="labs"><a href="01_ml.html">1 找函式</a><a href="02_plugin.html">2 plug-in</a><a href="03_eif.html">3 EIF 修正</a><a href="04_remainder.html">4 剩下什麼</a><a href="05_nhefs.html">5 NHEFS</a><a href="06_rhc.html" aria-current="page">6 RHC</a><a href="07_ihdp.html">7 IHDP</a><a href="08_lalonde.html">8 LaLonde</a></nav>
+  <span id="status">準備中…</span>
+</div></header>
+<main>
+<p class="kicker">Lab 6　RHC</p>
+<h1>learner 太會背答案的時候（二元結果）</h1>
+<div class="actions"><button id="runall" disabled>▶ 全部執行</button><span class="time">第一次要裝 randomForest；全部約 2–4 分鐘，最慢的是第 06 格</span>
+<a class="colab" href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/06_rhc.ipynb" target="_blank" rel="noopener">在 Colab 開啟</a>
+<a class="dl" href="colab/06_rhc.ipynb" download>下載 .ipynb</a></div>
+<details class="toolbox"><summary>工具箱：這一頁用到的 R 函式（會自動先執行；點開可以看每一行）</summary>
+<div class="cell" data-label="工具箱"><script type="text/r">
+# ---- estimators: one set of nuisance predictions -> different answers ----
+# Notation (same as the slides): O = (X, A, Y)
+#   Q(a, X) = E[Y | A = a, X]            outcome regression   -> nu$Q1, nu$Q0
+#   g(X)    = P(A = 1 | X)               propensity score     -> nu$g
+#   H(A, X) = A / g - (1 - A) / (1 - g)  clever covariate
+#   D(O; g, Q, psi) = H (Y - Q_A) + Q1 - Q0 - psi   efficient influence function of the ATE
+expit <- function(x) 1 / (1 + exp(-x))
+bound <- function(p, lo = 0.025, hi = 0.975) pmin(pmax(p, lo), hi)
+
+est_plugin <- function(nu) mean(nu$Q1 - nu$Q0)               # g-computation: predict twice, subtract, average
+
+est_ipw_ht <- function(dat, nu)                               # Horvitz-Thompson IPTW: divide by n
+  mean(dat$A * dat$Y / nu$g - (1 - dat$A) * dat$Y / (1 - nu$g))
+
+est_ipw <- function(dat, nu) {                                # Hajek (stabilized) IPTW: divide by the sum of weights
+  w1 <- dat$A / nu$g; w0 <- (1 - dat$A) / (1 - nu$g)
+  sum(w1 * dat$Y) / sum(w1) - sum(w0 * dat$Y) / sum(w0)
+}
+
+eif <- function(dat, nu, psi) {
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  QA <- ifelse(dat$A == 1, nu$Q1, nu$Q0)
+  H * (dat$Y - QA) + nu$Q1 - nu$Q0 - psi
+}
+
+wald <- function(psi, D) {                                    # SE from the EIF: sqrt(mean(D^2) / n)
+  se <- sqrt(mean(D^2) / length(D))
+  c(est = psi, se = se, lo = psi - 1.96 * se, hi = psi + 1.96 * se)
+}
+
+est_aipw <- function(dat, nu) {                               # one-step: psi_plug + P_n D  (solves P_n D = 0)
+  psi <- mean(eif(dat, nu, 0))
+  wald(psi, eif(dat, nu, psi))
+}
+
+est_tmle <- function(dat, nu, ybounds = range(dat$Y)) {       # targeting: move Q-hat along H until P_n D = 0
+  lo <- ybounds[1]; hi <- ybounds[2]
+  sc <- function(y) pmin(pmax((y - lo) / (hi - lo), 1e-6), 1 - 1e-6)
+  Ys <- (dat$Y - lo) / (hi - lo)
+  Q1s <- sc(nu$Q1); Q0s <- sc(nu$Q0); QAs <- ifelse(dat$A == 1, Q1s, Q0s)
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  fl <- suppressWarnings(glm(Ys ~ -1 + H, offset = qlogis(QAs), family = quasibinomial()))
+  eps <- unname(coef(fl))
+  Q1t <- expit(qlogis(Q1s) + eps / nu$g)
+  Q0t <- expit(qlogis(Q0s) - eps / (1 - nu$g))
+  nu_t <- data.frame(Q1 = lo + (hi - lo) * Q1t, Q0 = lo + (hi - lo) * Q0t, g = nu$g)
+  psi <- mean(nu_t$Q1 - nu_t$Q0)
+  c(wald(psi, eif(dat, nu_t, psi)), eps = eps)
+}
+
+weight_summary <- function(dat, nu) {                         # largest weight and effective sample size (ESS)
+  w <- ifelse(dat$A == 1, 1 / nu$g, 1 / (1 - nu$g))
+  c(max_weight = max(w),
+    ESS_treated = sum(w[dat$A == 1])^2 / sum(w[dat$A == 1]^2), n_treated = sum(dat$A),
+    ESS_control = sum(w[dat$A == 0])^2 / sum(w[dat$A == 0]^2), n_control = sum(1 - dat$A))
+}
+
+# ---- real data: loaders return list(name, X, A, Y, binary) ----
+load_rhc <- function(path = "data/rhc.csv") {
+  d <- read.csv(path, stringsAsFactors = TRUE)
+  d[[1]] <- NULL                                              # first column is a row number
+  A <- as.integer(d$swang1 == "RHC"); Y <- as.integer(d$dth30 == "Yes")
+  drop <- c("swang1", "death", "dth30", "sadmdte", "dschdte", "dthdte", "lstctdte",   # same drop list as Karim (2026)
+            "t3d30", "ptid", "cat2", "adld3p", "urin1")
+  covs <- droplevels(d[, setdiff(names(d), drop), drop = FALSE])
+  X <- as.data.frame(model.matrix(~ . - 1, data = covs))
+  colnames(X) <- make.names(colnames(X), unique = TRUE)
+  list(name = "RHC", X = X, A = A, Y = Y, binary = TRUE)
+}
+load_ihdp <- function(r = 1, dir = "data/ihdp") {
+  d <- read.csv(file.path(dir, sprintf("ihdp_npci_%d.csv", r)), header = FALSE)
+  names(d) <- c("treatment", "y_factual", "y_cfactual", "mu0", "mu1", paste0("x", 1:25))
+  list(name = sprintf("IHDP #%d", r), X = d[, paste0("x", 1:25)], A = d$treatment, Y = d$y_factual,
+       binary = FALSE, truth = mean(d$mu1 - d$mu0), mu0 = d$mu0, mu1 = d$mu1)
+}
+read_nsw <- function(file) {
+  d <- read.table(file, header = FALSE)
+  names(d) <- c("treat", "age", "educ", "black", "hisp", "married", "nodegree", "re74", "re75", "re78")
+  d
+}
+load_lalonde <- function(setting = c("psid", "experimental"), dir = "data/lalonde") {
+  setting <- match.arg(setting)
+  tr <- read_nsw(file.path(dir, "nswre74_treated.txt")); ct <- read_nsw(file.path(dir, "nswre74_control.txt"))
+  benchmark <- mean(tr$re78) - mean(ct$re78)                   # randomized: the simple difference is the answer
+  d <- if (setting == "experimental") rbind(tr, ct) else rbind(tr, read_nsw(file.path(dir, "psid_controls.txt")))
+  covs <- c("age", "educ", "black", "hisp", "married", "nodegree", "re74", "re75")
+  list(name = paste0("LaLonde (", setting, ")"), X = d[, covs], A = d$treat, Y = d$re78, binary = FALSE, benchmark = benchmark)
+}
+
+# ---- learners: "glm" (main effects) or "rf" (random forest) ----
+learn_g <- function(X, A, newX, learner = "glm", ntree = 100) {
+  if (learner == "glm") {
+    fit <- suppressWarnings(glm(A ~ ., data = data.frame(A = A, X), family = binomial))
+    return(unname(suppressWarnings(predict(fit, newX, type = "response"))))
+  }
+  fit <- randomForest::randomForest(x = X, y = factor(A, levels = 0:1), ntree = ntree)
+  unname(predict(fit, newX, type = "prob")[, "1"])
+}
+learn_Q <- function(X, A, Y, newX, binary, learner = "glm", ntree = 100) {
+  tr <- data.frame(A = A, X); n1 <- data.frame(A = 1, newX); n0 <- data.frame(A = 0, newX)
+  if (learner == "glm") {
+    fit <- if (binary) suppressWarnings(glm(Y ~ ., data = data.frame(Y = Y, tr), family = binomial))
+           else lm(Y ~ ., data = data.frame(Y = Y, tr))
+    pr <- function(nd) unname(suppressWarnings(predict(fit, nd, type = "response")))
+    return(list(Q1 = pr(n1), Q0 = pr(n0)))
+  }
+  if (binary) {
+    fit <- randomForest::randomForest(x = tr, y = factor(Y, levels = 0:1), ntree = ntree)
+    pr <- function(nd) unname(predict(fit, nd, type = "prob")[, "1"])
+  } else {
+    fit <- randomForest::randomForest(x = tr, y = Y, ntree = ntree)
+    pr <- function(nd) unname(predict(fit, nd))
+  }
+  list(Q1 = pr(n1), Q0 = pr(n0))
+}
+
+# full: train on everyone, predict the same people.  crossfit: each prediction comes from the other K - 1 folds
+nuisance <- function(d, learner = "glm", scheme = c("full", "crossfit"), K = 5, seed = 1,
+                     bounds = c(0.025, 0.975), ntree = 100) {
+  scheme <- match.arg(scheme)
+  n <- length(d$A)
+  set.seed(seed)
+  fold <- if (scheme == "full") rep(1L, n) else sample(rep(seq_len(K), length.out = n))
+  out <- data.frame(Q1 = numeric(n), Q0 = numeric(n), g_raw = numeric(n))
+  for (k in unique(fold)) {
+    te <- fold == k; tr <- if (scheme == "full") rep(TRUE, n) else !te
+    q <- learn_Q(d$X[tr, , drop = FALSE], d$A[tr], d$Y[tr], d$X[te, , drop = FALSE], d$binary, learner, ntree)
+    out$Q1[te] <- q$Q1; out$Q0[te] <- q$Q0
+    out$g_raw[te] <- learn_g(d$X[tr, , drop = FALSE], d$A[tr], d$X[te, , drop = FALSE], learner, ntree)
+  }
+  if (d$binary) { out$Q1 <- pmin(pmax(out$Q1, 0), 1); out$Q0 <- pmin(pmax(out$Q0, 0), 1) }
+  out$g <- pmin(pmax(out$g_raw, bounds[1]), bounds[2])
+  out$fold <- fold
+  out
+}
+
+panel <- function(d, nu, label = "") {                        # one set of nuisances -> four estimators
+  dd <- list(A = d$A, Y = d$Y)
+  a <- est_aipw(dd, nu); t <- est_tmle(dd, nu, ybounds = if (d$binary) c(0, 1) else range(d$Y))
+  data.frame(scheme = label, estimator = c("g-computation", "IPTW (Hajek)", "AIPW", "TMLE"),
+             est = c(est_plugin(nu), est_ipw(dd, nu), a[["est"]], t[["est"]]),
+             se = c(NA, NA, a[["se"]], t[["se"]]), lo = c(NA, NA, a[["lo"]], t[["lo"]]), hi = c(NA, NA, a[["hi"]], t[["hi"]]))
+}
+residual_check <- function(d, nu) {                           # is the learner grading its own exam?
+  QA <- ifelse(d$A == 1, nu$Q1, nu$Q0); H <- d$A / nu$g - (1 - d$A) / (1 - nu$g)
+  c(resid_rms = sqrt(mean((d$Y - QA)^2)), correction = mean(H * (d$Y - QA)))
+}
+
+# ---- diagnostics: overlap and balance ----
+smd <- function(x, A, w = rep(1, length(A))) {                # standardized mean difference
+  m1 <- weighted.mean(x[A == 1], w[A == 1]); m0 <- weighted.mean(x[A == 0], w[A == 0])
+  s <- sqrt((var(x[A == 1]) + var(x[A == 0])) / 2)
+  if (s == 0) 0 else (m1 - m0) / s
+}
+balance_table <- function(X, A, g) {
+  w <- ifelse(A == 1, 1 / g, 1 / (1 - g))
+  data.frame(variable = names(X), before = sapply(X, smd, A = A), after_IPW = sapply(X, smd, A = A, w = w), row.names = NULL)
+}
+overlap_summary <- function(g_raw, A, bounds = c(0.025, 0.975)) {
+  gb <- pmin(pmax(g_raw, bounds[1]), bounds[2]); w <- ifelse(A == 1, 1 / gb, 1 / (1 - gb))
+  c(min_g = min(g_raw), max_g = max(g_raw), pct_clipped = 100 * mean(g_raw < bounds[1] | g_raw > bounds[2]),
+    max_weight = max(w), ESS_treated = sum(w[A == 1])^2 / sum(w[A == 1]^2), ESS_control = sum(w[A == 0])^2 / sum(w[A == 0]^2))
+}
+
+# ---- plotting helpers (base graphics only) ----
+COL <- list(red = "#D9480F", teal = "#0B7285", ink = "#1C1B19", muted = "#6B665E",
+            gold = "#C98A0C", plum = "#7B3F8C", rule = "#DDD6CA")
+lab_par <- function(...) par(mar = c(4.5, 5, 1.5, 1), las = 1, bty = "n", col.axis = COL$muted, ...)
+
+overlap_plot <- function(g_raw, A, xlab = "estimated propensity score  g-hat(X)", labels = c("A = 1", "A = 0"), breaks = 40) {
+  br <- seq(0, 1, length.out = breaks + 1)                    # mirrored histogram: treated up, control down
+  h1 <- hist(pmin(pmax(g_raw[A == 1], 0), 1), breaks = br, plot = FALSE)$counts
+  h0 <- hist(pmin(pmax(g_raw[A == 0], 0), 1), breaks = br, plot = FALSE)$counts
+  lab_par()
+  plot(NA, xlim = c(0, 1), ylim = c(-max(h0), max(h1)), axes = FALSE, xlab = xlab, ylab = "count")
+  axis(1); yt <- pretty(c(-max(h0), max(h1))); axis(2, at = yt, labels = abs(yt))
+  rect(br[-length(br)], 0, br[-1], h1, col = adjustcolor(COL$red, .8), border = "white")
+  rect(br[-length(br)], 0, br[-1], -h0, col = adjustcolor(COL$teal, .8), border = "white")
+  abline(h = 0)
+  text(0.98, max(h1) * .85, labels[1], adj = 1, col = COL$red, font = 2)
+  text(0.98, -max(h0) * .85, labels[2], adj = 1, col = COL$teal, font = 2)
+}
+
+forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", col = COL$ink, xlab = "estimate", xlim = NULL) {
+  n <- length(est); y <- n:1
+  rng <- range(c(est, lo, hi, ref), na.rm = TRUE)
+  if (is.null(xlim)) xlim <- rng + c(-1, 1) * diff(rng) * 0.08
+  op <- par(mar = c(4.5, min(22, max(8, 0.62 * max(nchar(lab)) + 1)), 1.5, 1), las = 1, bty = "n", col.axis = COL$muted)
+  on.exit(par(op))
+  plot(NA, xlim = xlim, ylim = c(0.5, n + 0.5), axes = FALSE, xlab = xlab, ylab = "")
+  abline(h = y, col = "#F0EBE3")
+  if (!is.null(ref)) {
+    abline(v = ref, lty = 2, col = COL$muted); pos <- (ref[1] - xlim[1]) / diff(xlim)
+    mtext(ref_lab, 3, at = ref[1], adj = if (pos > 0.7) 1 else if (pos < 0.3) 0 else 0.5, cex = .8, col = COL$muted)
+  }
+  ok <- !is.na(lo)
+  segments(lo[ok], y[ok], hi[ok], y[ok], lwd = 3, col = rep_len(col, n)[ok])
+  points(est, y, pch = 19, cex = 1.5, col = rep_len(col, n))
+  axis(1); axis(2, at = y, labels = lab, tick = FALSE, col.axis = COL$ink)
+}
+</script></div></details>
+
+<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01–03</td><td>資料、兩組差在哪、overlap</td><td>56–59、93</td></tr><tr><td>04</td><td>GLM：full sample 和 cross-fit 幾乎一樣</td><td>85–87</td></tr><tr><td>05–06</td><td>random forest：full sample 的殘差被低估 → AIPW、CI 都歪掉；cross-fit 救回來</td><td>63、85–87、93</td></tr><tr><td>07–08</td><td>四種組合畫在一起；TMLE 的範圍優勢</td><td>84</td></tr></table>
+<div class="note note"><p>資料：Connors et al. (1996) SUPPORT 研究的 RHC 資料，取自 Vanderbilt Biostatistics 公開資料庫（hbiostat.org/data）。共變數處理和 Karim (2026) 相同：拿掉治療、結果、日期與 ID，以及缺失太多的 cat2、adld3p、urin1，類別變數展開成 0/1。這是觀察資料，<b>沒有真值</b>。</p></div>
+<h2><span class="n">01</span>資料與問題</h2>
+<div class="cell"><script type="text/r">
+d <- load_rhc("data/rhc.csv")
+c(n = length(d$A), covariates = ncol(d$X), had_RHC = sum(d$A), death_rate = mean(d$Y),
+  unadjusted_RD = mean(d$Y[d$A == 1]) - mean(d$Y[d$A == 0]))
+</script></div>
+<div class="look"><b>看什麼：</b><p>做 RHC 的人 30 天死亡率高 7.4 個百分點。這是 RHC 害的，還是做 RHC 的人本來就比較重？</p></div>
+<h2><span class="n">02</span>做 RHC 的人，本來就比較重</h2>
+<div class="cell"><script type="text/r">
+s <- sapply(d$X, smd, A = d$A)
+top <- head(sort(abs(s), decreasing = TRUE), 10)
+round(data.frame(SMD = s[names(top)]), 2)
+</script></div>
+<div class="look"><b>看什麼：</b><p>前幾名是 APACHE 分數（aps1）、血壓（meanbp1）、PaO₂/FiO₂（pafi1）、診斷類別——做 RHC 的病人病得比較重。這就是 confounding，也是 Connors 這篇當年引起爭議的原因。</p></div>
+<h2><span class="n">03</span>overlap<span class="slide">投影片 67、93</span></h2>
+<div class="cell"><script type="text/r">
+nu_glm_full <- nuisance(d, "glm", "full")
+round(overlap_summary(nu_glm_full$g_raw, d$A), 3)
+overlap_plot(nu_glm_full$g_raw, d$A, labels = c("RHC", "no RHC"))
+</script></div>
+<div class="look"><b>看什麼：</b><p>兩組有明顯位移（做 RHC 的偏右），但大部分範圍都有重疊；被截斷的人不到 2%，治療組的有效樣本數還有約 1,200（原本 2,184）。overlap 夠用，問題不在這裡。</p></div>
+<h2><span class="n">04</span>GLM：full sample 和 cross-fit<span class="slide">投影片 85–87</span></h2>
+<p>先用主效應 logistic regression 當 Q 和 g。這種模型「容量」小，就算看過自己的資料，也背不起來。</p>
+<div class="cell"><script type="text/r">
+nu_glm_cf <- nuisance(d, "glm", "crossfit", seed = 1)
+rbind(full = residual_check(d, nu_glm_full), crossfit = residual_check(d, nu_glm_cf))
+rbind(panel(d, nu_glm_full, "GLM full"), panel(d, nu_glm_cf, "GLM cross-fit"))
+</script></div>
+<div class="look"><b>看什麼：</b><p>殘差的 RMS，樣本內 0.417、out-of-fold 0.423，幾乎一樣——GLM 沒在背答案。所以 full sample 和 cross-fit 的 AIPW 都約 0.056–0.058，CI 也差不多。</p></div>
+<h2><span class="n">05</span>Random forest，full sample：自己改考卷<span class="slide">投影片 63、93</span></h2>
+<p>換成 random forest（100 棵樹）。full sample 的意思是：用 5,735 人訓練，再預測同一批 5,735 人。瀏覽器約 20–40 秒。</p>
+<div class="cell"><script type="text/r">
+nu_rf_full <- nuisance(d, "rf", "full", ntree = 100)
+residual_check(d, nu_rf_full)
+panel(d, nu_rf_full, "RF full")
+</script></div>
+<div class="look"><b>看什麼：</b><p>殘差 RMS 掉到 0.16——每個病人的預測幾乎就是他自己的結果，因為訓練時看過他。後果：</p>
+<ul><li>AIPW 的修正項 H(Y − Q̂<sub>A</sub>) 平均只剩 0.007，AIPW（約 0.022）被拉回 g-computation（約 0.015）。</li><li>EIF 的 SE 也跟著被低估，CI（約 0.016–0.028）窄得不像話——<b>不是比較準，是假裝比較準。</b></li><li>TMLE 的非線性更新對同一個過擬合的 Q̂ 反應不同，跑到 0.085。兩個「號稱漸近相同」的估計器，在這裡差了四倍。</li></ul></div>
+<h2><span class="n">06</span>Random forest，cross-fit：預測和打分數分開<span class="slide">投影片 85–87</span></h2>
+<p>同樣的 random forest，但每個人的預測都來自沒看過他的另外 4 折。要訓練 10 個森林，瀏覽器約 1–3 分鐘。</p>
+<div class="cell"><script type="text/r">
+nu_rf_cf <- nuisance(d, "rf", "crossfit", seed = 1, ntree = 100)
+rbind(full = residual_check(d, nu_rf_full), crossfit = residual_check(d, nu_rf_cf))
+panel(d, nu_rf_cf, "RF cross-fit")
+</script></div>
+<div class="look"><b>看什麼：</b><p>out-of-fold 殘差回到 0.42（跟 GLM 一樣），修正項從 0.007 變成約 0.02，AIPW 和 TMLE 重新靠在一起（約 0.033–0.040），CI 變寬到合理的大小（±0.025）。random forest 本身有隨機性，瀏覽器和本機 R 的數字會差一點（例如 AIPW 0.033 vs 0.037），機制一樣。Karim (2026) 用 SuperLearner 看到一模一樣的機制：樣本內殘差 0.30、out-of-fold 0.42；full-sample AIPW 0.033、DML 0.043。</p></div>
+<details class="think"><summary>想一想：random forest 的 g-computation 在 full 和 cross-fit 都只有 0.014–0.015，為什麼比 GLM 的 0.055 小那麼多？</summary><p>random forest 把 A 當成 66 個變數中的一個，分裂時不一定會用到它——治療的效果被「平滑」掉了。這就是 Lab 2 第 05 格的原因 2：ML 故意偏一點，對預測 loss 划算，對 ATE 不划算。AIPW／TMLE 的修正項就是在補這一塊；但修正要有效，前提是殘差是誠實的（cross-fit）。</p></details>
+<h2><span class="n">07</span>四種組合畫在一起</h2>
+<div class="cell"><script type="text/r">
+all <- rbind(panel(d, nu_glm_full, "GLM full"), panel(d, nu_glm_cf, "GLM cross-fit"),
+             panel(d, nu_rf_full, "RF full"), panel(d, nu_rf_cf, "RF cross-fit"))
+sub <- all[all$estimator %in% c("AIPW", "TMLE"), ]
+karim <- data.frame(lab = c("Karim AIPW full", "Karim TMLE full", "Karim DML (r=100)", "Karim CV-TMLE (r=100)"),
+                    est = c(0.033, 0.053, 0.043, 0.047), lo = c(0.021, 0.041, 0.019, 0.023), hi = c(0.045, 0.065, 0.067, 0.071))
+forest_plot(c(paste(sub$scheme, sub$estimator), karim$lab), c(sub$est, karim$est), c(sub$lo, karim$lo), c(sub$hi, karim$hi),
+            col = c(ifelse(grepl("full", sub$scheme), COL$red, COL$teal), rep(COL$muted, 4)), ref = 0, xlab = "30-day mortality risk difference")
+</script></div>
+<div class="look"><b>看什麼：</b><p>紅色（full sample）裡，RF 的兩條線又窄又互相打架；藍色（cross-fit）裡，GLM（約 0.058）和 RF（約 0.033–0.040）的 CI 大幅重疊，都是 3–6 個百分點左右的增加。灰色是 Karim 的結果。<b>cross-fitting 不改變 estimand，卻可以改變有限樣本的 estimate 和 CI。</b></p></div>
+<h2><span class="n">08</span>二元結果：TMLE 一定落在合法範圍<span class="slide">投影片 84</span></h2>
+<div class="cell"><script type="text/r">
+pseudo <- with(nu_rf_cf, Q1 - Q0 + (d$A / g - (1 - d$A) / (1 - g)) * (d$Y - ifelse(d$A == 1, Q1, Q0)))
+c(AIPW_contribution_min = min(pseudo), AIPW_contribution_max = max(pseudo))
+tm <- est_tmle(list(A = d$A, Y = d$Y), nu_rf_cf, ybounds = c(0, 1))
+tm
+</script></div>
+<div class="look"><b>看什麼：</b><p>AIPW 是把一堆個人貢獻平均，這份資料的個人貢獻從約 −24 到 +13（權重乘殘差），所以有限樣本裡答案不保證落在 [−1, 1]。TMLE 是兩個更新後的機率 Q̂*₁、Q̂*₀ 相減，每一項都在 [0, 1]，風險差一定在 [−1, 1]。這是 Lab 3 第 07 格那張表「結果範圍」那一列的意思——這份資料兩者都在範圍內，但罕見結果、極端權重時差別就出來了。</p></div>
+<p class="punch">樣本內殘差小，不代表模型準；可能只是它看過答案。</p>
+<p>RHC 沒有真值：cross-fit 之後幾個方法一致，是內部一致性的檢查，不能證明沒有未測量混雜。Connors 原研究報的是 odds ratio，這裡是風險差，數值不能直接比。</p>
+<nav class="pager"><a href="05_nhefs.html">← 5 NHEFS</a><a href="07_ihdp.html">7 IHDP →</a></nav>
+</main>
+<script type="module" src="web/runner.js?v=8"></script>
+</body>
+</html>

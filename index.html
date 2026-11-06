@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokémon-CP Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="web/style.css?v=8">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="home" href="index.html">Pokémon-CP Lab</a>
+  <nav class="labs"><a href="01_ml.html">1 找函式</a><a href="02_plugin.html">2 plug-in</a><a href="03_eif.html">3 EIF 修正</a><a href="04_remainder.html">4 剩下什麼</a><a href="05_nhefs.html">5 NHEFS</a><a href="06_rhc.html">6 RHC</a><a href="07_ihdp.html">7 IHDP</a><a href="08_lalonde.html">8 LaLonde</a></nav>
+</div></header>
+<main>
+<h1>預測很準，就能回答因果嗎？</h1>
+<p class="punch">主線：plug-in 的誤差跟著 Q̂ 走；用 EIF 修正之後，只剩 ĝ 誤差 × Q̂ 誤差。</p>
+
+<h2><span class="n">A</span>機器學習就是找函式<span class="slide">投影片 1–54</span></h2>
+<div class="cards">
+<a class="card" href="01_ml.html"><span class="k">LAB 1</span><h3>寶可夢 CP 預測</h3><p>三步驟、gradient descent、overfitting、一百個平行宇宙的 bias／variance、ridge、cross-validation 與 SuperLearner。</p></a>
+</div>
+
+<h2><span class="n">B</span>神奇糖果：從預測到因果<span class="slide">投影片 55–94</span></h2>
+<div class="cards">
+<a class="card" href="02_plugin.html"><span class="k">LAB 2 · 投影片 55–68</span><h3>plug-in 為什麼會歪</h3><p>同一隻寶可夢預測兩次；預測最準的 learner，ATE 卻不是最準；plug-in 誤差拆三塊；IPTW。</p></a>
+<a class="card" href="03_eif.html"><span class="k">LAB 3 · 投影片 70–84</span><h3>用 EIF 把一階誤差扣掉</h3><p>多一個人答案動多少？EIF 的兩塊積木、D(O) 平均為 0、one-step（AIPW）與 targeting（TMLE）。</p></a>
+<a class="card" href="04_remainder.html"><span class="k">LAB 4 · 投影片 85–94</span><h3>修完之後還剩什麼</h3><p>R₂ 是乘積、double robustness 的 2×2、orthogonality 曲線、cross-fitting、positivity、重複模擬看 coverage。</p></a>
+</div>
+
+<h2><span class="n">C</span>真實資料上考試<span class="slide">投影片 56–95</span></h2>
+<div class="cards">
+<a class="card" href="05_nhefs.html"><span class="k">LAB 5 · Karim 2026 主線</span><h3>NHEFS：一家人上場</h3><p>overlap 與 balance 診斷、AIPW／TMLE／DML／CV-TMLE、三種敏感度、和論文對帳。</p></a>
+<a class="card" href="06_rhc.html"><span class="k">LAB 6 · 自己改考卷</span><h3>RHC：二元結果</h3><p>random forest 在 full sample 背答案：殘差 0.16 vs 0.42；cross-fit 救回來；TMLE 的範圍優勢。</p></a>
+<a class="card" href="07_ihdp.html"><span class="k">LAB 7 · 知道真值</span><h3>IHDP：誰的 CI 在說謊</h3><p>10 份半合成資料：bias、RMSE、95% 覆蓋率。RF full sample 只蓋到 2–3/10，cross-fit 回到 10/10。</p></a>
+<a class="card" href="08_lalonde.html"><span class="k">LAB 8 · positivity 壞掉</span><h3>LaLonde：當橋不存在</h3><p>80% 的人 ĝ &lt; 0.025，前 10 個人扛一半的權重；估計值從 −14,000 到 +800；trimming 改變的是題目。</p></a>
+</div>
+
+<h2>建議的順序與時間</h2>
+<table>
+<tr><th>Lab</th><th>課堂時間</th><th>回答的問題</th><th>瀏覽器執行時間</th><th>Colab</th></tr>
+<tr><td><a href="01_ml.html">1 找函式</a></td><td>20 分鐘</td><td>ML 是什麼？什麼叫 flexible？為什麼要 CV？</td><td>約 1 分鐘</td><td><a href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/01_ml.ipynb" target="_blank" rel="noopener">開啟</a></td></tr>
+<tr><td><a href="02_plugin.html">2 plug-in</a></td><td>20 分鐘</td><td>regression 怎麼變成因果效果？為什麼預測準不夠？</td><td>約 1 分鐘</td><td><a href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/02_plugin.ipynb" target="_blank" rel="noopener">開啟</a></td></tr>
+<tr><td><a href="03_eif.html">3 EIF 修正</a></td><td>20 分鐘</td><td>EIF 是什麼？AIPW 和 TMLE 修了哪一塊？</td><td>約 30 秒</td><td><a href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/03_eif.ipynb" target="_blank" rel="noopener">開啟</a></td></tr>
+<tr><td><a href="04_remainder.html">4 剩下什麼</a></td><td>25 分鐘</td><td>DR、orthogonality、cross-fitting、positivity</td><td>約 3–5 分鐘</td><td><a href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/04_remainder.ipynb" target="_blank" rel="noopener">開啟</a></td></tr>
+<tr><td><a href="05_nhefs.html">5 NHEFS</a></td><td>20 分鐘</td><td>真實資料上，怎麼診斷、怎麼報告？</td><td>約 2 分鐘</td><td><a href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/05_nhefs.ipynb" target="_blank" rel="noopener">開啟</a></td></tr>
+<tr><td><a href="06_rhc.html">6 RHC</a></td><td>15 分鐘</td><td>為什麼要 cross-fitting？二元結果有什麼不同？</td><td>約 2–4 分鐘</td><td><a href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/06_rhc.ipynb" target="_blank" rel="noopener">開啟</a></td></tr>
+<tr><td><a href="07_ihdp.html">7 IHDP</a></td><td>15 分鐘</td><td>CI 真的有 95% 嗎？</td><td>約 2–3 分鐘</td><td><a href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/07_ihdp.ipynb" target="_blank" rel="noopener">開啟</a></td></tr>
+<tr><td><a href="08_lalonde.html">8 LaLonde</a></td><td>15 分鐘</td><td>overlap 不存在時，估計器能做什麼？</td><td>約 1 分鐘</td><td><a href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/08_lalonde.ipynb" target="_blank" rel="noopener">開啟</a></td></tr>
+</table>
+
+<h2>兩種開法</h2>
+<p><b>瀏覽器（webR）：</b>每一頁就是一個完整的 R 環境，程式、工具箱、說明全部在頁面裡，計算在你的瀏覽器裡完成，不用安裝任何東西。第一次開啟會從 webr.r-wasm.org 下載 R（約 30 MB，之後會快取）。</p>
+<p><b>Colab：</b>每一頁標題下面、和上面表格最右欄都有「在 Colab 開啟」，用 Google 帳號登入就能跑，會自動用 R runtime；第一格自動下載這個 Lab 需要的資料。想存自己的版本：「檔案 → 在雲端硬碟中儲存複本」。</p>
+<!-- 
+<h2>資料來源</h2>
+<table>
+<tr><td>寶可夢</td><td>75 筆 Pokémon GO 紀錄（OpenIntro），課堂切分依投影片重建</td></tr>
+<tr><td>神奇糖果</td><td>虛構情境，<code>simulate_candy()</code> 模擬</td></tr>
+<tr><td>NHEFS</td><td>CRAN causaldata 套件（MIT）；Hernán &amp; Robins《Causal Inference: What If》</td></tr>
+<tr><td>RHC</td><td>Connors et al. (1996) JAMA；Vanderbilt Biostatistics 公開資料（hbiostat.org/data）</td></tr>
+<tr><td>IHDP</td><td>Hill (2011) 半合成 benchmark；CEVAE 公開版本 ihdp_npci_1–10</td></tr>
+<tr><td>LaLonde</td><td>LaLonde (1986)；Dehejia &amp; Wahba 整理版（users.nber.org/~rdehejia/data）</td></tr>
+</table>
+<p class="ref">分析方法參考 Karim (2026) <i>Three Routes to One Answer</i> 與其 companion repository（github.com/ehsanx/dml-alternatives）。</p> -->
+</main>
+</body>
+</html>

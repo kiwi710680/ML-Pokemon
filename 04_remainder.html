@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 4　神奇糖果（下）：修完之後還剩什麼？R₂、double robustness、cross-fitting</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="web/style.css?v=8">
+<script type="importmap">
+{
+ "imports": {
+  "@codemirror/state": "https://esm.sh/*@codemirror/state@6.4.1",
+  "@codemirror/view": "https://esm.sh/*@codemirror/view@6.26.3",
+  "@codemirror/language": "https://esm.sh/*@codemirror/language@6.10.1",
+  "@codemirror/commands": "https://esm.sh/*@codemirror/commands@6.5.0",
+  "@codemirror/legacy-modes/mode/r": "https://esm.sh/*@codemirror/legacy-modes@6.4.0/mode/r",
+  "@lezer/common": "https://esm.sh/*@lezer/common@1.2.1",
+  "@lezer/highlight": "https://esm.sh/*@lezer/highlight@1.2.0",
+  "@lezer/lr": "https://esm.sh/*@lezer/lr@1.4.0",
+  "style-mod": "https://esm.sh/*style-mod@4.1.2",
+  "w3c-keyname": "https://esm.sh/*w3c-keyname@2.2.8"
+ }
+}
+</script>
+</head>
+<body data-files="" data-packages="">
+<header class="top"><div class="wrap">
+  <a class="home" href="index.html">Pokémon-CP Lab</a>
+  <nav class="labs"><a href="01_ml.html">1 找函式</a><a href="02_plugin.html">2 plug-in</a><a href="03_eif.html">3 EIF 修正</a><a href="04_remainder.html" aria-current="page">4 剩下什麼</a><a href="05_nhefs.html">5 NHEFS</a><a href="06_rhc.html">6 RHC</a><a href="07_ihdp.html">7 IHDP</a><a href="08_lalonde.html">8 LaLonde</a></nav>
+  <span id="status">準備中…</span>
+</div></header>
+<main>
+<p class="kicker">Lab 4　神奇糖果（下）</p>
+<h1>修完之後還剩什麼？R₂、double robustness、cross-fitting</h1>
+<p class="lead">Lab 3 把一階誤差扣掉了，答案從 84.2 回到 80.3。但修正不是魔法：泰勒展開還剩一個二階項 R₂，還有「自己出題自己改」留下的一塊。這個 Lab 把剩下的東西一塊一塊拆開，看它們長什麼樣、什麼時候會變大。對應投影片 85–94。</p>
+<div class="actions"><button id="runall" disabled>▶ 全部執行</button><span class="time">全部約 3–5 分鐘，最慢的是第 01、07 格</span>
+<a class="colab" href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/04_remainder.ipynb" target="_blank" rel="noopener">在 Colab 開啟</a>
+<a class="dl" href="colab/04_remainder.ipynb" download>下載 .ipynb</a></div>
+<details class="toolbox"><summary>工具箱：這一頁用到的 R 函式（會自動先執行；點開可以看每一行）</summary>
+<div class="cell" data-label="工具箱"><script type="text/r">
+# ---- estimators: one set of nuisance predictions -> different answers ----
+# Notation (same as the slides): O = (X, A, Y)
+#   Q(a, X) = E[Y | A = a, X]            outcome regression   -> nu$Q1, nu$Q0
+#   g(X)    = P(A = 1 | X)               propensity score     -> nu$g
+#   H(A, X) = A / g - (1 - A) / (1 - g)  clever covariate
+#   D(O; g, Q, psi) = H (Y - Q_A) + Q1 - Q0 - psi   efficient influence function of the ATE
+expit <- function(x) 1 / (1 + exp(-x))
+bound <- function(p, lo = 0.025, hi = 0.975) pmin(pmax(p, lo), hi)
+
+est_plugin <- function(nu) mean(nu$Q1 - nu$Q0)               # g-computation: predict twice, subtract, average
+
+est_ipw_ht <- function(dat, nu)                               # Horvitz-Thompson IPTW: divide by n
+  mean(dat$A * dat$Y / nu$g - (1 - dat$A) * dat$Y / (1 - nu$g))
+
+est_ipw <- function(dat, nu) {                                # Hajek (stabilized) IPTW: divide by the sum of weights
+  w1 <- dat$A / nu$g; w0 <- (1 - dat$A) / (1 - nu$g)
+  sum(w1 * dat$Y) / sum(w1) - sum(w0 * dat$Y) / sum(w0)
+}
+
+eif <- function(dat, nu, psi) {
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  QA <- ifelse(dat$A == 1, nu$Q1, nu$Q0)
+  H * (dat$Y - QA) + nu$Q1 - nu$Q0 - psi
+}
+
+wald <- function(psi, D) {                                    # SE from the EIF: sqrt(mean(D^2) / n)
+  se <- sqrt(mean(D^2) / length(D))
+  c(est = psi, se = se, lo = psi - 1.96 * se, hi = psi + 1.96 * se)
+}
+
+est_aipw <- function(dat, nu) {                               # one-step: psi_plug + P_n D  (solves P_n D = 0)
+  psi <- mean(eif(dat, nu, 0))
+  wald(psi, eif(dat, nu, psi))
+}
+
+est_tmle <- function(dat, nu, ybounds = range(dat$Y)) {       # targeting: move Q-hat along H until P_n D = 0
+  lo <- ybounds[1]; hi <- ybounds[2]
+  sc <- function(y) pmin(pmax((y - lo) / (hi - lo), 1e-6), 1 - 1e-6)
+  Ys <- (dat$Y - lo) / (hi - lo)
+  Q1s <- sc(nu$Q1); Q0s <- sc(nu$Q0); QAs <- ifelse(dat$A == 1, Q1s, Q0s)
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  fl <- suppressWarnings(glm(Ys ~ -1 + H, offset = qlogis(QAs), family = quasibinomial()))
+  eps <- unname(coef(fl))
+  Q1t <- expit(qlogis(Q1s) + eps / nu$g)
+  Q0t <- expit(qlogis(Q0s) - eps / (1 - nu$g))
+  nu_t <- data.frame(Q1 = lo + (hi - lo) * Q1t, Q0 = lo + (hi - lo) * Q0t, g = nu$g)
+  psi <- mean(nu_t$Q1 - nu_t$Q0)
+  c(wald(psi, eif(dat, nu_t, psi)), eps = eps)
+}
+
+weight_summary <- function(dat, nu) {                         # largest weight and effective sample size (ESS)
+  w <- ifelse(dat$A == 1, 1 / nu$g, 1 / (1 - nu$g))
+  c(max_weight = max(w),
+    ESS_treated = sum(w[dat$A == 1])^2 / sum(w[dat$A == 1]^2), n_treated = sum(dat$A),
+    ESS_control = sum(w[dat$A == 0])^2 / sum(w[dat$A == 0]^2), n_control = sum(1 - dat$A))
+}
+
+# ---- magic candy: simulated data, so the truth (Q, g, psi) is known ----
+species_levels <- c("Pidgey", "Weedle", "Caterpie", "Eevee")
+
+simulate_candy <- function(n = 800, seed = NULL, strength = 1) {
+  if (!is.null(seed)) set.seed(seed)
+  species <- factor(sample(species_levels, n, replace = TRUE, prob = c(.40, .20, .15, .25)), levels = species_levels)
+  top <- c(Pidgey = 450, Weedle = 260, Caterpie = 260, Eevee = 650)[as.character(species)]
+  cp  <- round(10 + top * rbeta(n, 2, 2.5))
+  mult <- c(Pidgey = 1.85, Weedle = 1.10, Caterpie = 1.08, Eevee = 2.60)[as.character(species)]
+  f0   <- mult * cp * (1 - cp / 2600)                         # evolution curve, bends at high CP
+  # trainers prefer strong Pokemon and Eevee: confounding. Larger strength -> g closer to 0 or 1
+  g0 <- expit(strength * (-1.8 + 3.2 * (cp / top)) + 0.5 * (species == "Eevee"))
+  A  <- rbinom(n, 1, g0)
+  tau <- 20 + 0.30 * cp                                       # candy effect: stronger Pokemon gain more
+  Y1 <- f0 + tau + rnorm(n, 0, 30)
+  Y0 <- f0 + rnorm(n, 0, 30)
+  data.frame(species, cp, A, Y = ifelse(A == 1, Y1, Y0), g0, Q1 = f0 + tau, Q0 = f0, Y1, Y0)
+}
+
+candy_truth <- function(n = 2e6, seed = 1) {                  # population ATE = E[tau(X)]
+  set.seed(seed)
+  species <- sample(species_levels, n, replace = TRUE, prob = c(.40, .20, .15, .25))
+  top <- c(Pidgey = 450, Weedle = 260, Caterpie = 260, Eevee = 650)[species]
+  mean(20 + 0.30 * round(10 + top * rbeta(n, 2, 2.5)))
+}
+candy_population <- function(n = 20000, seed = 2027, strength = 1) simulate_candy(n, seed, strength)
+
+# ---- nuisance learners ----
+knn_Q <- function(train, newdata, a, k = 10) {                # same species, same arm, k nearest CP, average Y
+  out <- rep(NA_real_, nrow(newdata))
+  for (s in levels(newdata$species)) {
+    tr <- train[train$species == s & train$A == a, ]
+    id <- which(newdata$species == s)
+    if (length(id) == 0) next
+    if (nrow(tr) == 0) { out[id] <- mean(train$Y[train$A == a]); next }
+    kk <- min(k, nrow(tr))
+    D  <- abs(outer(newdata$cp[id], tr$cp, "-"))
+    out[id] <- apply(D, 1, function(d) mean(tr$Y[order(d)[seq_len(kk)]]))
+  }
+  out
+}
+lin_Q <- function(train, newdata, a) predict(lm(Y ~ A + species + cp, data = train), transform(newdata, A = a))  # one straight line (slide 62)
+logit_g <- function(train, newdata) {                        # each species its own intercept and slope
+  fit <- glm(A ~ species + species:cp, family = binomial, data = train)
+  bound(predict(fit, newdata, type = "response"))
+}
+
+fit_nuisance <- function(train, newdata, Qlearner = "knn", k = 10) {
+  if (Qlearner == "knn") { Q1 <- knn_Q(train, newdata, 1, k); Q0 <- knn_Q(train, newdata, 0, k) }
+  else { Q1 <- lin_Q(train, newdata, 1); Q0 <- lin_Q(train, newdata, 0) }
+  data.frame(Q1 = Q1, Q0 = Q0, g = logit_g(train, newdata))
+}
+nuisance_full <- function(dat, ...) fit_nuisance(dat, dat, ...)          # train and predict on the same Pokemon
+nuisance_crossfit <- function(dat, K = 5, seed = NULL, ...) {             # each prediction comes from the other folds
+  if (!is.null(seed)) set.seed(seed)
+  fold <- sample(rep(seq_len(K), length.out = nrow(dat)))
+  nu <- data.frame(Q1 = NA_real_, Q0 = NA_real_, g = NA_real_)[rep(1, nrow(dat)), ]
+  for (k in seq_len(K)) { te <- fold == k; nu[te, ] <- fit_nuisance(dat[!te, ], dat[te, ], ...) }
+  rownames(nu) <- NULL
+  nu
+}
+
+all_estimates <- function(dat, k = 10, K = 5) {
+  nf <- nuisance_full(dat, k = k); nc <- nuisance_crossfit(dat, K = K, k = k)
+  rbind(naive       = c(est = mean(dat$Y[dat$A == 1]) - mean(dat$Y[dat$A == 0]), se = NA, lo = NA, hi = NA),
+        linear      = c(est = unname(coef(lm(Y ~ A + species + cp, data = dat))["A"]), se = NA, lo = NA, hi = NA),
+        plugin_knn  = c(est = est_plugin(nf), se = NA, lo = NA, hi = NA),
+        ipw         = c(est = est_ipw(dat, nf), se = NA, lo = NA, hi = NA),
+        aipw_full   = est_aipw(dat, nf),
+        tmle_full   = est_tmle(dat, nf)[1:4],
+        aipw_cf_DML = est_aipw(dat, nc),
+        tmle_cf     = est_tmle(dat, nc)[1:4])
+}
+
+# ---- only a simulation can do this: split the error into pieces ----
+#   plug-in: psi_plug - psi = sampling + first-order bias + empirical process
+#   AIPW   : psi_AIPW - psi = (P_n - P)D + R2 + empirical process
+# "P" (population mean) is approximated by a large population `pop`
+decompose_candy <- function(dat, pop, k = 10, scheme = c("full", "crossfit"), K = 5, seed = 1) {
+  scheme <- match.arg(scheme)
+  psi <- candy_truth(); n <- nrow(dat)
+  set.seed(seed)
+  fold <- if (scheme == "full") rep(1L, n) else sample(rep(seq_len(K), length.out = n))
+  nu <- data.frame(Q1 = numeric(n), Q0 = numeric(n), g = numeric(n))
+  first_order <- 0; R2 <- 0; gerr <- 0; qerr <- 0
+  for (f in unique(fold)) {
+    te <- fold == f
+    tr <- if (scheme == "full") rep(TRUE, n) else !te
+    nu[te, ] <- fit_nuisance(dat[tr, ], dat[te, ], k = k)
+    np <- fit_nuisance(dat[tr, ], pop, k = k)                 # the same model, evaluated on the population
+    w <- mean(te)
+    r2_unit <- (np$g - pop$g0) / np$g * (np$Q1 - pop$Q1) + (np$g - pop$g0) / (1 - np$g) * (np$Q0 - pop$Q0)
+    fo_unit <- (np$Q1 - pop$Q1) - (np$Q0 - pop$Q0)
+    first_order <- first_order + w * mean(fo_unit)
+    R2 <- R2 + w * mean(r2_unit)
+    if (f == fold[1]) units <- data.frame(species = pop$species, cp = pop$cp, g_err = np$g - pop$g0,
+                                          Q1_err = np$Q1 - pop$Q1, Q0_err = np$Q0 - pop$Q0,
+                                          R2_unit = r2_unit, first_order_unit = fo_unit)
+    gerr <- gerr + w * mean((np$g - pop$g0)^2)
+    qerr <- qerr + w * mean(((np$Q1 - pop$Q1)^2 + (np$Q0 - pop$Q0)^2) / 2)
+  }
+  plug <- mean(nu$Q1 - nu$Q0)
+  aipw <- est_aipw(dat, nu)[["est"]]
+  samp_plug <- mean(dat$Q1 - dat$Q0) - psi
+  samp_aipw <- mean(eif(dat, data.frame(Q1 = dat$Q1, Q0 = dat$Q0, g = dat$g0), psi))   # (P_n - P)D, since PD = 0
+  list(plugin = c(total = plug - psi, sampling = samp_plug, first_order = first_order,
+                  emp_process = plug - psi - samp_plug - first_order),
+       aipw = c(total = aipw - psi, sampling = samp_aipw, R2 = R2, emp_process = aipw - psi - samp_aipw - R2),
+       L2 = c(g = sqrt(gerr), Q = sqrt(qerr), product = sqrt(gerr) * sqrt(qerr)),
+       units = units)                                         # per-Pokemon errors (first fold's model), for plots
+}
+
+# Neyman orthogonality: move g and Q away from the truth by t, compare the two moments
+orthogonality_curves <- function(pop, ts = seq(-1, 1, by = 0.05), dq1 = 40, dq0 = -20, dg = 0.6) {
+  g <- pop$g0; Q1 <- pop$Q1; Q0 <- pop$Q0
+  psi <- mean(Q1 - Q0)
+  gbar <- g + dg * g * (1 - g)
+  eif_moment <- function(t, move_g, move_Q) {
+    gt <- if (move_g) g + t * (gbar - g) else g
+    q1 <- if (move_Q) Q1 + t * dq1 else Q1
+    q0 <- if (move_Q) Q0 + t * dq0 else Q0
+    mean(q1 - q0 + g / gt * (Q1 - q1) - (1 - g) / (1 - gt) * (Q0 - q0)) - psi
+  }
+  data.frame(t = ts, plugin_Q = ts * (dq1 - dq0),
+             eif_Q_only = sapply(ts, eif_moment, move_g = FALSE, move_Q = TRUE),
+             eif_g_only = sapply(ts, eif_moment, move_g = TRUE, move_Q = FALSE),
+             eif_both   = sapply(ts, eif_moment, move_g = TRUE, move_Q = TRUE))
+}
+
+# smallest possible SE: sqrt(V_eff / n), V_eff = E[sigma^2/g + sigma^2/(1-g)] + Var(tau), sigma = 30
+candy_se_bound <- function(pop, n) sqrt((mean(30^2 / pop$g0 + 30^2 / (1 - pop$g0)) + var(pop$Q1 - pop$Q0)) / n)
+
+# ---- plotting helpers (base graphics only) ----
+COL <- list(red = "#D9480F", teal = "#0B7285", ink = "#1C1B19", muted = "#6B665E",
+            gold = "#C98A0C", plum = "#7B3F8C", rule = "#DDD6CA")
+lab_par <- function(...) par(mar = c(4.5, 5, 1.5, 1), las = 1, bty = "n", col.axis = COL$muted, ...)
+
+overlap_plot <- function(g_raw, A, xlab = "estimated propensity score  g-hat(X)", labels = c("A = 1", "A = 0"), breaks = 40) {
+  br <- seq(0, 1, length.out = breaks + 1)                    # mirrored histogram: treated up, control down
+  h1 <- hist(pmin(pmax(g_raw[A == 1], 0), 1), breaks = br, plot = FALSE)$counts
+  h0 <- hist(pmin(pmax(g_raw[A == 0], 0), 1), breaks = br, plot = FALSE)$counts
+  lab_par()
+  plot(NA, xlim = c(0, 1), ylim = c(-max(h0), max(h1)), axes = FALSE, xlab = xlab, ylab = "count")
+  axis(1); yt <- pretty(c(-max(h0), max(h1))); axis(2, at = yt, labels = abs(yt))
+  rect(br[-length(br)], 0, br[-1], h1, col = adjustcolor(COL$red, .8), border = "white")
+  rect(br[-length(br)], 0, br[-1], -h0, col = adjustcolor(COL$teal, .8), border = "white")
+  abline(h = 0)
+  text(0.98, max(h1) * .85, labels[1], adj = 1, col = COL$red, font = 2)
+  text(0.98, -max(h0) * .85, labels[2], adj = 1, col = COL$teal, font = 2)
+}
+
+forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", col = COL$ink, xlab = "estimate", xlim = NULL) {
+  n <- length(est); y <- n:1
+  rng <- range(c(est, lo, hi, ref), na.rm = TRUE)
+  if (is.null(xlim)) xlim <- rng + c(-1, 1) * diff(rng) * 0.08
+  op <- par(mar = c(4.5, min(22, max(8, 0.62 * max(nchar(lab)) + 1)), 1.5, 1), las = 1, bty = "n", col.axis = COL$muted)
+  on.exit(par(op))
+  plot(NA, xlim = xlim, ylim = c(0.5, n + 0.5), axes = FALSE, xlab = xlab, ylab = "")
+  abline(h = y, col = "#F0EBE3")
+  if (!is.null(ref)) {
+    abline(v = ref, lty = 2, col = COL$muted); pos <- (ref[1] - xlim[1]) / diff(xlim)
+    mtext(ref_lab, 3, at = ref[1], adj = if (pos > 0.7) 1 else if (pos < 0.3) 0 else 0.5, cex = .8, col = COL$muted)
+  }
+  ok <- !is.na(lo)
+  segments(lo[ok], y[ok], hi[ok], y[ok], lwd = 3, col = rep_len(col, n)[ok])
+  points(est, y, pch = 19, cex = 1.5, col = rep_len(col, n))
+  axis(1); axis(2, at = y, labels = lab, tick = FALSE, col.axis = COL$ink)
+}
+</script></div></details>
+
+<table class="map"><tr><th>格</th><th>投影片</th><th>這格回答的問題</th></tr><tr><td>01–02</td><td>85–86、89</td><td>修完剩下哪幾塊？R₂ 為什麼那麼小？</td></tr><tr><td>03</td><td>88</td><td>double robustness：兩張保險，賠一張就夠？</td></tr><tr><td>04</td><td>90–91</td><td>Neyman orthogonality 長什麼樣？</td></tr><tr><td>05</td><td>87、93</td><td>cross-fitting 救的是什麼？</td></tr><tr><td>06</td><td>77、93</td><td>positivity 差的時候，代價是什麼？</td></tr><tr><td>07</td><td>87、92</td><td>一份資料可能是運氣：CI 真的有 95% 嗎？</td></tr></table>
+<h2><span class="n">01</span>修完之後剩下什麼：拆開 AIPW 的誤差<span class="slide">投影片 85–86</span></h2>
+<p><code>ψ̂_AIPW − ψ = (ℙn − P)D + R₂ + (ℙn − P)(D̂ − D)</code>，其中 <code>R₂ = E[(ĝ − g)/ĝ·(Q̂₁ − Q₁)] + E[(ĝ − g)/(1 − ĝ)·(Q̂₀ − Q₀)]</code>。把 plug-in、full-sample AIPW、cross-fit AIPW 各拆一次（瀏覽器約 1 分鐘）。每一根長條是一塊誤差，菱形是總誤差。</p>
+<div class="cell"><script type="text/r">
+truth <- candy_truth()
+d   <- simulate_candy(1500, seed = 2026)
+pop <- candy_population(8000)
+dec    <- decompose_candy(d, pop, k = 10, scheme = "full")
+dec_cf <- decompose_candy(d, pop, k = 10, scheme = "crossfit")
+tab <- rbind(plugin_full = dec$plugin, AIPW_full = dec$aipw, AIPW_crossfit = dec_cf$aipw)
+colnames(tab) <- c("total", "sampling", "first_order_or_R2", "empirical_process")
+round(tab, 2)
+round(rbind(full = dec$L2, crossfit = dec_cf$L2), 3)   # L2 error of g-hat, of Q-hat, and their product
+cols <- c(COL$teal, COL$red, COL$plum)
+lab_par(mar = c(4.5, 9, 1, 1))
+bp <- barplot(t(tab[3:1, 2:4]), beside = TRUE, horiz = TRUE, col = cols, border = NA,
+              names.arg = c("AIPW\ncross-fit", "AIPW\nfull", "plug-in\nfull"),
+              xlim = c(-2.5, 5.5), xlab = "error of the estimate (CP)")
+abline(v = 0, col = COL$ink)
+points(tab[3:1, "total"], colMeans(bp), pch = 23, bg = "white", cex = 2.2, lwd = 2)
+legend("bottomright", c("sampling: (Pn - P)D", "first-order bias (plug-in) / R2 (AIPW)", "empirical process", "total"),
+       fill = c(cols, NA), border = NA, pch = c(NA, NA, NA, 23), pt.bg = "white", pt.cex = 1.6, bty = "n")
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>最上面那組（plug-in）的紅色長條約 4.8，是 first-order bias；換到 AIPW，紅色變成 R₂，只剩約 −1——<b>一階項變成「ĝ 誤差 × Q̂ 誤差」，加法變乘法。</b></li><li>L2 表：‖ĝ − g‖ 只有 0.04，‖Q̂ − Q‖ 約 19，乘起來不到 1：兩個都不完美，乘起來就小了。</li><li>紫色（empirical process）在 full sample 約 0.9，cross-fit 只剩約 −0.3：預測和打分數用不同的人，這一塊就壓下去了。</li><li>藍色（抽樣誤差）在兩種 AIPW 一模一樣——它是真 EIF 的樣本平均，跟 nuisance 怎麼估無關，也就是最後 CI 要描述的那一塊。</li><li>投影片 86 只放了上面兩組（plug-in 和 full-sample AIPW）；cross-fit 那組留在這裡看。</li><li>你可能會想說：cross-fit 的菱形（約 −2.1）怎麼反而比 full sample（約 −0.5）離 0 更遠？因為這只是一份資料，R₂ 和抽樣誤差剛好同號疊在一起。cross-fitting 保證的不是「每一份都比較準」，而是誤差的結構乾淨、CI 誠實——第 07 格重複很多次才看得到。</li></ul></div>
+<h2><span class="n">02</span>R₂ 為什麼那麼小？每一隻波波攤開來看<span class="slide">投影片 89</span></h2>
+<p>把母體裡每一隻波波的誤差畫出來：左邊是 propensity 的誤差，中間是 outcome 的誤差，右邊把每一隻對 plug-in 的貢獻（紅）和對 R₂ 的貢獻（藍）疊在一起。</p>
+<div class="cell"><script type="text/r">
+u <- dec$units                               # full-sample models evaluated on the population
+p <- u[u$species == "Pidgey", ]
+pad <- function(y, top = 0.35) { r <- range(y); r + c(0, top * diff(r)) }   # extra room on top for the legend
+# averages: Pidgey only (what the dots show) vs the whole population (what enters the table above)
+means <- rbind(Pidgey = colMeans(p[, c("first_order_unit", "R2_unit")]),
+               all_species = colMeans(u[, c("first_order_unit", "R2_unit")]))
+round(means, 2)
+round(c(first_order = unname(dec$plugin["first_order"]), R2 = unname(dec$aipw["R2"])), 2)   # same as all_species
+par(mfrow = c(1, 3), mar = c(5, 5.8, 2.5, 1), mgp = c(3.6, .8, 0), las = 1, bty = "n", col.axis = COL$muted)
+plot(p$cp, p$g_err, pch = 16, cex = .45, col = adjustcolor(COL$plum, .4),
+     xlab = "Original CP (Pidgey)", ylab = "g-hat(X) - g(X)", main = "propensity error")
+abline(h = 0)
+plot(p$cp, p$Q1_err, pch = 16, cex = .45, col = adjustcolor(COL$red, .4), ylim = pad(c(p$Q1_err, p$Q0_err), 0.2),
+     xlab = "Original CP (Pidgey)", ylab = "Q-hat - Q", main = "outcome error")
+points(p$cp, p$Q0_err, pch = 16, cex = .45, col = adjustcolor(COL$teal, .4))
+abline(h = 0)
+legend("topright", c("Q1-hat - Q1", "Q0-hat - Q0"), pch = 16, col = c(COL$red, COL$teal), bty = "n")
+plot(p$cp, p$first_order_unit, pch = 16, cex = .45, col = adjustcolor(COL$red, .35),
+     ylim = pad(c(p$first_order_unit, p$R2_unit)), xlab = "Original CP (Pidgey)",
+     ylab = "contribution per Pokemon (CP)", main = "plug-in term vs R2 term")
+points(p$cp, p$R2_unit, pch = 16, cex = .45, col = adjustcolor(COL$teal, .6))
+abline(h = 0)
+abline(h = means["Pidgey", "first_order_unit"], col = COL$red, lwd = 3, lty = 2)
+abline(h = means["Pidgey", "R2_unit"], col = COL$teal, lwd = 3, lty = 2)
+legend("topright", c("(Q1-hat - Q1) - (Q0-hat - Q0)", "R2 integrand", "Pidgey means"),
+       pch = c(16, 16, NA), lty = c(NA, NA, 2), lwd = c(NA, NA, 3), col = c(COL$red, COL$teal, COL$ink), bty = "n")
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>左圖：ĝ 的誤差最多約 7 個百分點，是一條平滑的曲線——低 CP 低估、高 CP 高估。中圖：Q̂ 的誤差大很多，兩端更糟：CP 最低那端 Q̂₁ 高估到 +100（Lab 2 第 04 格那個問題），最高那端兩條都往下掉——kNN 在邊界只能找到一邊的鄰居。</li><li>右圖：紅點是每一隻波波對 plug-in 偏差的貢獻，散得很開，波波的平均（紅虛線）約 6.9；藍點是對 R₂ 的貢獻，要先乘上 (ĝ − g)/ĝ 這個小數字，所以中間一大段都被壓在 0 附近，平均（藍虛線）約 −2.2。全部物種一起平均，剛好是上一格表裡的 4.81 和 −1.03。</li><li>藍點只在最左邊（CP &lt; 60）一路掉到 −80：那裡 Q̂₁ 錯了將近 100，ĝ 也低估、而且 ĝ 本身就小。<b>兩個 nuisance 同一個地方一起錯，乘積才會大。</b></li></ul></div>
+<h2><span class="n">03</span>Double robustness：兩張保險，賠一張就夠？<span class="slide">投影片 88</span></h2>
+<p>R₂ 是乘積，所以只要 ĝ 或 Q̂ 其中一個是對的，它就是 0。真實研究沒辦法驗證這件事，但模擬可以：我們手上有<b>真的</b> g 和 Q。故意弄錯一個——Q 錯 = 一條直線 <code>Y ~ A + species + cp</code>（投影片 62 那條），g 錯 = 每隻寶可夢都給一樣的機率（完全不調整）——在 100,000 隻的大母體上算 AIPW 的偏差，抽樣誤差幾乎可以忽略。</p>
+<div class="cell"><script type="text/r">
+big <- candy_population(1e5)
+psi_big <- mean(big$Q1 - big$Q0)
+Q_right <- data.frame(Q1 = big$Q1, Q0 = big$Q0)
+Q_wrong <- data.frame(Q1 = lin_Q(big, big, 1), Q0 = lin_Q(big, big, 0))
+g_right <- big$g0
+g_wrong <- rep(mean(big$A), nrow(big))
+aipw_bias <- function(Q, g) est_aipw(big, data.frame(Q, g = g))[["est"]] - psi_big
+dr <- matrix(c(aipw_bias(Q_right, g_right), aipw_bias(Q_wrong, g_right),
+               aipw_bias(Q_right, g_wrong), aipw_bias(Q_wrong, g_wrong)), 2,
+             dimnames = list(c("Q right", "Q wrong"), c("g right", "g wrong")))
+round(dr, 2)                                                     # AIPW bias in each cell
+c(plugin_with_Q_wrong = mean(Q_wrong$Q1 - Q_wrong$Q0) - psi_big,
+  IPTW_with_g_wrong = est_ipw(big, data.frame(g = g_wrong)) - psi_big)   # one insurance only
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>2×2 表的三格接近 0（只剩一點點抽樣雜訊），只有「兩個都錯」那格偏了約 −7。</li><li>下面兩個數字是「只買一張保險」：plug-in 用錯的 Q 偏約 −7；IPTW 用錯的 g 偏到 +130 以上（等於沒調整）。</li><li>而且 AIPW 在「Q 錯、g 對」那格，是把 Q 的 −7 整個救回來——這就是 Lab 3 的修正項在做的事。</li></ul></div>
+<details class="think"><summary>想一想：兩個都錯的那格，AIPW 偏了約 −7，跟 plug-in 用錯的 Q 一樣多。這是巧合嗎？</summary><p>不是。g 錯成「每隻都一樣」時，修正項只是把兩組的殘差平均相減；直線模型 <code>Y ~ A + species + cp</code> 裡有 A，最小平方法會讓兩組的殘差各自加總剛好是 0，所以修正項整個是 0、什麼都沒修，AIPW 就等於 plug-in。雙重穩健不是「兩個都錯也能救」——投影片 88 那張表右下角是 ✗ 的原因。</p></details>
+<h2><span class="n">04</span>Neyman orthogonality 長什麼樣<span class="slide">投影片 90–91</span></h2>
+<p>讓 nuisance 從真值往旁邊偏 t：<code>g_t = g + t(ḡ − g)</code>、<code>Q_t = Q + t(Q̄ − Q)</code>。plug-in 的 moment 是 <code>E[Q_{1t} − Q_{0t}] − ψ</code>；EIF 的 moment 是 <code>E[D(O; ψ, g_t, Q_t)]</code>。用真的 g、Q 精確算出來（不靠抽樣），畫在同一張圖上。</p>
+<div class="cell"><script type="text/r">
+oc <- orthogonality_curves(pop)
+lab_par()
+plot(oc$t, oc$plugin_Q, type = "l", lwd = 3, col = COL$red, ylim = c(-20, 20),
+     xlab = "t: how far the nuisances move away from the truth", ylab = "moment (0 is ideal)")
+lines(oc$t, oc$eif_both, lwd = 3, col = COL$teal)
+lines(oc$t, oc$eif_Q_only, lwd = 3, lty = 2, col = COL$gold)
+lines(oc$t, oc$eif_g_only, lwd = 3, lty = 3, col = COL$plum)
+abline(h = 0, v = 0, col = "grey80")
+legend("topleft", c("plug-in: perturb Q", "EIF: perturb g and Q", "EIF: perturb Q only (g correct)", "EIF: perturb g only (Q correct)"),
+       col = c(COL$red, COL$teal, COL$gold, COL$plum), lwd = 3, lty = c(1, 1, 2, 3), bty = "n")
+round(oc[oc$t %in% c(-1, -0.5, -0.1, 0, 0.1, 0.5, 1), ], 3)
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>紅線（plug-in）是斜線：Q 偏一點，答案就偏一點——一階。</li><li>藍線（EIF，兩個都偏）在 t = 0 是平的，離開 0 才慢慢彎上去：t 很小的時候是 t² 的量級。這就是 orthogonality（讀微分）。</li><li>兩條虛線剛好是 0：只要 g 對或 Q 對，不管另一個偏多少，moment 都是 0——這就是上一格的 double robustness（讀極限）。<b>同一個乘積，兩種讀法。</b></li></ul></div>
+<h2><span class="n">05</span>Cross-fitting：不要自己出題自己改<span class="slide">投影片 87、93</span></h2>
+<p>把 kNN 的 k 改成 1：每隻寶可夢最近的鄰居常常就是自己，樣本內殘差被低估，修正項和 SE 都被低估。換成 out-of-fold 預測（每一隻的預測都來自沒看過牠的另外 4 折）就恢復了。也試試 k = 3、5、10。</p>
+<div class="cell"><script type="text/r">
+k <- 1
+f  <- nuisance_full(d, k = k)
+cf <- nuisance_crossfit(d, K = 5, seed = 1, k = k)
+rms <- function(nu) sqrt(mean((d$Y - ifelse(d$A == 1, nu$Q1, nu$Q0))^2))
+c(residual_RMS_in_sample = rms(f), residual_RMS_out_of_fold = rms(cf))
+rbind(full_sample = est_aipw(d, f), cross_fit_DML = est_aipw(d, cf), cross_fit_TMLE = est_tmle(d, cf)[1:4])
+</script></div>
+<div class="look"><b>看什麼：</b><p>k = 1 時樣本內殘差 22.8、out-of-fold 43.4，差了將近一倍。full-sample 的 SE（約 1.6）比 cross-fit（約 2.4）小很多——不是比較準，是<b>假裝比較準</b>。在本機重複 500 次：k = 1 時 full-sample CI 的覆蓋率只有 85%，cross-fit 是 95%；k = 10 時差距縮小成 93% vs 95%——learner 越會背答案，差距越大。</p></div>
+<details class="think"><summary>想一想：那 cross-fitting 有沒有代價？</summary><p>有。每個 nuisance 只用 4/5 的資料訓練，Q̂ 的誤差變大一點（看第 01 格的 L2 表：cross-fit 的 ‖Q̂ − Q‖ 比較大），R₂ 也就大一點。它用一點點估計精度，換掉「自己改考卷」那一塊。資料少的時候這個代價會更明顯——Lab 7（IHDP）的 GLM 就是例子。</p></details>
+<h2><span class="n">06</span>Positivity：訓練師越偏心，SE 越大<span class="slide">投影片 77、93</span></h2>
+<p><code>strength</code> 控制訓練師有多偏心：越大，g 越靠近 0 或 1。看最大權重、cross-fit AIPW 的 SE，以及理論上最小的 SE <code>√(V_eff / n)</code>（效率界）。</p>
+<div class="cell"><script type="text/r">
+pos <- t(sapply(c(0.5, 1, 2, 3), function(s) {
+  ds <- simulate_candy(1500, seed = 2026, strength = s); ps <- candy_population(4000, strength = s)
+  nc <- nuisance_crossfit(ds, K = 5, seed = 1, k = 10); a <- est_aipw(ds, nc)
+  c(strength = s, min_g = min(ds$g0), max_g = max(ds$g0), max_weight = unname(weight_summary(ds, nc)["max_weight"]),
+    AIPW = a[["est"]], SE = a[["se"]], SE_bound = candy_se_bound(ps, 1500))
+}))
+round(pos, 3)
+lab_par()
+plot(pos[, "strength"], pos[, "SE"], type = "b", pch = 19, lwd = 2, col = COL$red, ylim = c(0, max(pos[, "SE"]) * 1.1),
+     xlab = "confounding strength (trainer favouritism)", ylab = "standard error")
+lines(pos[, "strength"], pos[, "SE_bound"], type = "b", pch = 19, lwd = 2, col = COL$teal)
+legend("topleft", c("SE of cross-fit AIPW", "efficiency bound sqrt(V_eff / n)"), col = c(COL$red, COL$teal), lwd = 2, bty = "n")
+</script></div>
+<div class="look"><b>看什麼：</b><p>strength = 3 時，最小的 g 只剩 0.006，SE 從 2 暴增到 10。藍線是任何估計器都打不破的下界，它也在變大：<code>V_eff = E[σ²/g + σ²/(1−g)] + Var(τ)</code>，g 靠近 0 或 1，第一項就爆。紅線比藍線漲得更快，因為截斷在 [0.025, 0.975]、kNN 在稀疏處學得更差。<b>overlap 差的代價是 precision，換估計器救不回來</b>——Lab 8（LaLonde）是真實資料的版本。</p></div>
+<h2><span class="n">07</span>一份資料可能是運氣：重複 30 次<span class="slide">投影片 87、92</span></h2>
+<p>同一個世界抽 30 份資料（每份 1,500 隻），每份都估一次。看平均有沒有對準真值、95% CI 有沒有大約 95% 蓋到真值。（約 1–2 分鐘）</p>
+<div class="cell"><script type="text/r">
+reps <- 30; k <- 10
+set.seed(1)
+sim <- lapply(seq_len(reps), function(r) suppressWarnings(all_estimates(simulate_candy(1500), k = k)))
+est <- sapply(sim, function(e) e[, "est"])
+cover <- sapply(sim, function(e) e[, "lo"] < truth & e[, "hi"] > truth)
+summ <- data.frame(mean = rowMeans(est), bias = rowMeans(est) - truth, SD = apply(est, 1, sd), coverage = rowMeans(cover))
+round(summ, 2)
+ord <- rownames(est)[-1]
+lab_par(mar = c(4.5, 9, 1, 1))
+stripchart(lapply(ord, function(r) est[r, ]), method = "jitter", pch = 19, col = adjustcolor(COL$teal, .5),
+           group.names = ord, xlab = "ATE estimate", las = 1)
+abline(v = truth, lty = 2, lwd = 2)
+</script></div>
+<div class="look"><b>看什麼：</b><p>plug-in 整團往右偏（約 +3 到 +4）；AIPW、TMLE 對準虛線。30 次只能看大概：覆蓋率的蒙地卡羅誤差約 ±4%（√(0.95×0.05/30)）。如果跑出來 full sample 0.97、cross-fit 0.90，看起來好像 full 比較好——但兩個都在 95% ± 2 個 MCSE 之內，這是雜訊，不是結論。本機 500 次的版本（k = 10）是 full 93%、cross-fit 95%；想看大差距，把 <code>k</code> 改成 1 再跑。</p></div>
+<h2><span class="n">08</span>帶走三件事</h2>
+<p class="punch">plug-in 的誤差跟著 Q̂ 走；用 D 修正之後，只剩 ĝ 誤差 × Q̂ 誤差。</p>
+<ul><li>第 01–02 格：first-order bias（約 4.8）被換成 R₂（約 −1.0）——加法變乘法。</li><li>第 03–04 格：double robustness（只錯一個 → 0）和 orthogonality（兩個都偏一點 → t²）是同一個乘積的兩種讀法。</li><li>第 05–06 格：cross-fitting 處理自己改考卷；positivity 差的代價是 SE，任何估計器都救不了。</li></ul>
+<nav class="pager"><a href="03_eif.html">← 3 EIF 修正</a><a href="05_nhefs.html">5 NHEFS →</a></nav>
+</main>
+<script type="module" src="web/runner.js?v=8"></script>
+</body>
+</html>

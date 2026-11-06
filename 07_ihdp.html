@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 7　IHDP：只有知道真值，才能談 coverage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="web/style.css?v=8">
+<script type="importmap">
+{
+ "imports": {
+  "@codemirror/state": "https://esm.sh/*@codemirror/state@6.4.1",
+  "@codemirror/view": "https://esm.sh/*@codemirror/view@6.26.3",
+  "@codemirror/language": "https://esm.sh/*@codemirror/language@6.10.1",
+  "@codemirror/commands": "https://esm.sh/*@codemirror/commands@6.5.0",
+  "@codemirror/legacy-modes/mode/r": "https://esm.sh/*@codemirror/legacy-modes@6.4.0/mode/r",
+  "@lezer/common": "https://esm.sh/*@lezer/common@1.2.1",
+  "@lezer/highlight": "https://esm.sh/*@lezer/highlight@1.2.0",
+  "@lezer/lr": "https://esm.sh/*@lezer/lr@1.4.0",
+  "style-mod": "https://esm.sh/*style-mod@4.1.2",
+  "w3c-keyname": "https://esm.sh/*w3c-keyname@2.2.8"
+ }
+}
+</script>
+</head>
+<body data-files="data/ihdp/ihdp_npci_1.csv,data/ihdp/ihdp_npci_2.csv,data/ihdp/ihdp_npci_3.csv,data/ihdp/ihdp_npci_4.csv,data/ihdp/ihdp_npci_5.csv,data/ihdp/ihdp_npci_6.csv,data/ihdp/ihdp_npci_7.csv,data/ihdp/ihdp_npci_8.csv,data/ihdp/ihdp_npci_9.csv,data/ihdp/ihdp_npci_10.csv" data-packages="randomForest">
+<header class="top"><div class="wrap">
+  <a class="home" href="index.html">Pokémon-CP Lab</a>
+  <nav class="labs"><a href="01_ml.html">1 找函式</a><a href="02_plugin.html">2 plug-in</a><a href="03_eif.html">3 EIF 修正</a><a href="04_remainder.html">4 剩下什麼</a><a href="05_nhefs.html">5 NHEFS</a><a href="06_rhc.html">6 RHC</a><a href="07_ihdp.html" aria-current="page">7 IHDP</a><a href="08_lalonde.html">8 LaLonde</a></nav>
+  <span id="status">準備中…</span>
+</div></header>
+<main>
+<p class="kicker">Lab 7　IHDP</p>
+<h1>只有知道真值，才能談 coverage</h1>
+<p class="lead">NHEFS 和 RHC 只能看「方法之間像不像」，看不到「對不對」。IHDP 是半合成資料：共變數來自真實的早產兒介入試驗，結果是照公式模擬的——所以每一份都知道真正的 ATE。這是檢查 bias、RMSE、95% CI 覆蓋率的地方，也是 Lab 4 的 double robustness 和 cross-fitting 在真實共變數上的考試。</p>
+<div class="actions"><button id="runall" disabled>▶ 全部執行</button><span class="time">第一次要裝 randomForest；全部約 2–3 分鐘，最慢的是第 04 格</span>
+<a class="colab" href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/07_ihdp.ipynb" target="_blank" rel="noopener">在 Colab 開啟</a>
+<a class="dl" href="colab/07_ihdp.ipynb" download>下載 .ipynb</a></div>
+<details class="toolbox"><summary>工具箱：這一頁用到的 R 函式（會自動先執行；點開可以看每一行）</summary>
+<div class="cell" data-label="工具箱"><script type="text/r">
+# ---- estimators: one set of nuisance predictions -> different answers ----
+# Notation (same as the slides): O = (X, A, Y)
+#   Q(a, X) = E[Y | A = a, X]            outcome regression   -> nu$Q1, nu$Q0
+#   g(X)    = P(A = 1 | X)               propensity score     -> nu$g
+#   H(A, X) = A / g - (1 - A) / (1 - g)  clever covariate
+#   D(O; g, Q, psi) = H (Y - Q_A) + Q1 - Q0 - psi   efficient influence function of the ATE
+expit <- function(x) 1 / (1 + exp(-x))
+bound <- function(p, lo = 0.025, hi = 0.975) pmin(pmax(p, lo), hi)
+
+est_plugin <- function(nu) mean(nu$Q1 - nu$Q0)               # g-computation: predict twice, subtract, average
+
+est_ipw_ht <- function(dat, nu)                               # Horvitz-Thompson IPTW: divide by n
+  mean(dat$A * dat$Y / nu$g - (1 - dat$A) * dat$Y / (1 - nu$g))
+
+est_ipw <- function(dat, nu) {                                # Hajek (stabilized) IPTW: divide by the sum of weights
+  w1 <- dat$A / nu$g; w0 <- (1 - dat$A) / (1 - nu$g)
+  sum(w1 * dat$Y) / sum(w1) - sum(w0 * dat$Y) / sum(w0)
+}
+
+eif <- function(dat, nu, psi) {
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  QA <- ifelse(dat$A == 1, nu$Q1, nu$Q0)
+  H * (dat$Y - QA) + nu$Q1 - nu$Q0 - psi
+}
+
+wald <- function(psi, D) {                                    # SE from the EIF: sqrt(mean(D^2) / n)
+  se <- sqrt(mean(D^2) / length(D))
+  c(est = psi, se = se, lo = psi - 1.96 * se, hi = psi + 1.96 * se)
+}
+
+est_aipw <- function(dat, nu) {                               # one-step: psi_plug + P_n D  (solves P_n D = 0)
+  psi <- mean(eif(dat, nu, 0))
+  wald(psi, eif(dat, nu, psi))
+}
+
+est_tmle <- function(dat, nu, ybounds = range(dat$Y)) {       # targeting: move Q-hat along H until P_n D = 0
+  lo <- ybounds[1]; hi <- ybounds[2]
+  sc <- function(y) pmin(pmax((y - lo) / (hi - lo), 1e-6), 1 - 1e-6)
+  Ys <- (dat$Y - lo) / (hi - lo)
+  Q1s <- sc(nu$Q1); Q0s <- sc(nu$Q0); QAs <- ifelse(dat$A == 1, Q1s, Q0s)
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  fl <- suppressWarnings(glm(Ys ~ -1 + H, offset = qlogis(QAs), family = quasibinomial()))
+  eps <- unname(coef(fl))
+  Q1t <- expit(qlogis(Q1s) + eps / nu$g)
+  Q0t <- expit(qlogis(Q0s) - eps / (1 - nu$g))
+  nu_t <- data.frame(Q1 = lo + (hi - lo) * Q1t, Q0 = lo + (hi - lo) * Q0t, g = nu$g)
+  psi <- mean(nu_t$Q1 - nu_t$Q0)
+  c(wald(psi, eif(dat, nu_t, psi)), eps = eps)
+}
+
+weight_summary <- function(dat, nu) {                         # largest weight and effective sample size (ESS)
+  w <- ifelse(dat$A == 1, 1 / nu$g, 1 / (1 - nu$g))
+  c(max_weight = max(w),
+    ESS_treated = sum(w[dat$A == 1])^2 / sum(w[dat$A == 1]^2), n_treated = sum(dat$A),
+    ESS_control = sum(w[dat$A == 0])^2 / sum(w[dat$A == 0]^2), n_control = sum(1 - dat$A))
+}
+
+# ---- real data: loaders return list(name, X, A, Y, binary) ----
+load_rhc <- function(path = "data/rhc.csv") {
+  d <- read.csv(path, stringsAsFactors = TRUE)
+  d[[1]] <- NULL                                              # first column is a row number
+  A <- as.integer(d$swang1 == "RHC"); Y <- as.integer(d$dth30 == "Yes")
+  drop <- c("swang1", "death", "dth30", "sadmdte", "dschdte", "dthdte", "lstctdte",   # same drop list as Karim (2026)
+            "t3d30", "ptid", "cat2", "adld3p", "urin1")
+  covs <- droplevels(d[, setdiff(names(d), drop), drop = FALSE])
+  X <- as.data.frame(model.matrix(~ . - 1, data = covs))
+  colnames(X) <- make.names(colnames(X), unique = TRUE)
+  list(name = "RHC", X = X, A = A, Y = Y, binary = TRUE)
+}
+load_ihdp <- function(r = 1, dir = "data/ihdp") {
+  d <- read.csv(file.path(dir, sprintf("ihdp_npci_%d.csv", r)), header = FALSE)
+  names(d) <- c("treatment", "y_factual", "y_cfactual", "mu0", "mu1", paste0("x", 1:25))
+  list(name = sprintf("IHDP #%d", r), X = d[, paste0("x", 1:25)], A = d$treatment, Y = d$y_factual,
+       binary = FALSE, truth = mean(d$mu1 - d$mu0), mu0 = d$mu0, mu1 = d$mu1)
+}
+read_nsw <- function(file) {
+  d <- read.table(file, header = FALSE)
+  names(d) <- c("treat", "age", "educ", "black", "hisp", "married", "nodegree", "re74", "re75", "re78")
+  d
+}
+load_lalonde <- function(setting = c("psid", "experimental"), dir = "data/lalonde") {
+  setting <- match.arg(setting)
+  tr <- read_nsw(file.path(dir, "nswre74_treated.txt")); ct <- read_nsw(file.path(dir, "nswre74_control.txt"))
+  benchmark <- mean(tr$re78) - mean(ct$re78)                   # randomized: the simple difference is the answer
+  d <- if (setting == "experimental") rbind(tr, ct) else rbind(tr, read_nsw(file.path(dir, "psid_controls.txt")))
+  covs <- c("age", "educ", "black", "hisp", "married", "nodegree", "re74", "re75")
+  list(name = paste0("LaLonde (", setting, ")"), X = d[, covs], A = d$treat, Y = d$re78, binary = FALSE, benchmark = benchmark)
+}
+
+# ---- learners: "glm" (main effects) or "rf" (random forest) ----
+learn_g <- function(X, A, newX, learner = "glm", ntree = 100) {
+  if (learner == "glm") {
+    fit <- suppressWarnings(glm(A ~ ., data = data.frame(A = A, X), family = binomial))
+    return(unname(suppressWarnings(predict(fit, newX, type = "response"))))
+  }
+  fit <- randomForest::randomForest(x = X, y = factor(A, levels = 0:1), ntree = ntree)
+  unname(predict(fit, newX, type = "prob")[, "1"])
+}
+learn_Q <- function(X, A, Y, newX, binary, learner = "glm", ntree = 100) {
+  tr <- data.frame(A = A, X); n1 <- data.frame(A = 1, newX); n0 <- data.frame(A = 0, newX)
+  if (learner == "glm") {
+    fit <- if (binary) suppressWarnings(glm(Y ~ ., data = data.frame(Y = Y, tr), family = binomial))
+           else lm(Y ~ ., data = data.frame(Y = Y, tr))
+    pr <- function(nd) unname(suppressWarnings(predict(fit, nd, type = "response")))
+    return(list(Q1 = pr(n1), Q0 = pr(n0)))
+  }
+  if (binary) {
+    fit <- randomForest::randomForest(x = tr, y = factor(Y, levels = 0:1), ntree = ntree)
+    pr <- function(nd) unname(predict(fit, nd, type = "prob")[, "1"])
+  } else {
+    fit <- randomForest::randomForest(x = tr, y = Y, ntree = ntree)
+    pr <- function(nd) unname(predict(fit, nd))
+  }
+  list(Q1 = pr(n1), Q0 = pr(n0))
+}
+
+# full: train on everyone, predict the same people.  crossfit: each prediction comes from the other K - 1 folds
+nuisance <- function(d, learner = "glm", scheme = c("full", "crossfit"), K = 5, seed = 1,
+                     bounds = c(0.025, 0.975), ntree = 100) {
+  scheme <- match.arg(scheme)
+  n <- length(d$A)
+  set.seed(seed)
+  fold <- if (scheme == "full") rep(1L, n) else sample(rep(seq_len(K), length.out = n))
+  out <- data.frame(Q1 = numeric(n), Q0 = numeric(n), g_raw = numeric(n))
+  for (k in unique(fold)) {
+    te <- fold == k; tr <- if (scheme == "full") rep(TRUE, n) else !te
+    q <- learn_Q(d$X[tr, , drop = FALSE], d$A[tr], d$Y[tr], d$X[te, , drop = FALSE], d$binary, learner, ntree)
+    out$Q1[te] <- q$Q1; out$Q0[te] <- q$Q0
+    out$g_raw[te] <- learn_g(d$X[tr, , drop = FALSE], d$A[tr], d$X[te, , drop = FALSE], learner, ntree)
+  }
+  if (d$binary) { out$Q1 <- pmin(pmax(out$Q1, 0), 1); out$Q0 <- pmin(pmax(out$Q0, 0), 1) }
+  out$g <- pmin(pmax(out$g_raw, bounds[1]), bounds[2])
+  out$fold <- fold
+  out
+}
+
+panel <- function(d, nu, label = "") {                        # one set of nuisances -> four estimators
+  dd <- list(A = d$A, Y = d$Y)
+  a <- est_aipw(dd, nu); t <- est_tmle(dd, nu, ybounds = if (d$binary) c(0, 1) else range(d$Y))
+  data.frame(scheme = label, estimator = c("g-computation", "IPTW (Hajek)", "AIPW", "TMLE"),
+             est = c(est_plugin(nu), est_ipw(dd, nu), a[["est"]], t[["est"]]),
+             se = c(NA, NA, a[["se"]], t[["se"]]), lo = c(NA, NA, a[["lo"]], t[["lo"]]), hi = c(NA, NA, a[["hi"]], t[["hi"]]))
+}
+residual_check <- function(d, nu) {                           # is the learner grading its own exam?
+  QA <- ifelse(d$A == 1, nu$Q1, nu$Q0); H <- d$A / nu$g - (1 - d$A) / (1 - nu$g)
+  c(resid_rms = sqrt(mean((d$Y - QA)^2)), correction = mean(H * (d$Y - QA)))
+}
+
+# ---- diagnostics: overlap and balance ----
+smd <- function(x, A, w = rep(1, length(A))) {                # standardized mean difference
+  m1 <- weighted.mean(x[A == 1], w[A == 1]); m0 <- weighted.mean(x[A == 0], w[A == 0])
+  s <- sqrt((var(x[A == 1]) + var(x[A == 0])) / 2)
+  if (s == 0) 0 else (m1 - m0) / s
+}
+balance_table <- function(X, A, g) {
+  w <- ifelse(A == 1, 1 / g, 1 / (1 - g))
+  data.frame(variable = names(X), before = sapply(X, smd, A = A), after_IPW = sapply(X, smd, A = A, w = w), row.names = NULL)
+}
+overlap_summary <- function(g_raw, A, bounds = c(0.025, 0.975)) {
+  gb <- pmin(pmax(g_raw, bounds[1]), bounds[2]); w <- ifelse(A == 1, 1 / gb, 1 / (1 - gb))
+  c(min_g = min(g_raw), max_g = max(g_raw), pct_clipped = 100 * mean(g_raw < bounds[1] | g_raw > bounds[2]),
+    max_weight = max(w), ESS_treated = sum(w[A == 1])^2 / sum(w[A == 1]^2), ESS_control = sum(w[A == 0])^2 / sum(w[A == 0]^2))
+}
+
+# ---- plotting helpers (base graphics only) ----
+COL <- list(red = "#D9480F", teal = "#0B7285", ink = "#1C1B19", muted = "#6B665E",
+            gold = "#C98A0C", plum = "#7B3F8C", rule = "#DDD6CA")
+lab_par <- function(...) par(mar = c(4.5, 5, 1.5, 1), las = 1, bty = "n", col.axis = COL$muted, ...)
+
+overlap_plot <- function(g_raw, A, xlab = "estimated propensity score  g-hat(X)", labels = c("A = 1", "A = 0"), breaks = 40) {
+  br <- seq(0, 1, length.out = breaks + 1)                    # mirrored histogram: treated up, control down
+  h1 <- hist(pmin(pmax(g_raw[A == 1], 0), 1), breaks = br, plot = FALSE)$counts
+  h0 <- hist(pmin(pmax(g_raw[A == 0], 0), 1), breaks = br, plot = FALSE)$counts
+  lab_par()
+  plot(NA, xlim = c(0, 1), ylim = c(-max(h0), max(h1)), axes = FALSE, xlab = xlab, ylab = "count")
+  axis(1); yt <- pretty(c(-max(h0), max(h1))); axis(2, at = yt, labels = abs(yt))
+  rect(br[-length(br)], 0, br[-1], h1, col = adjustcolor(COL$red, .8), border = "white")
+  rect(br[-length(br)], 0, br[-1], -h0, col = adjustcolor(COL$teal, .8), border = "white")
+  abline(h = 0)
+  text(0.98, max(h1) * .85, labels[1], adj = 1, col = COL$red, font = 2)
+  text(0.98, -max(h0) * .85, labels[2], adj = 1, col = COL$teal, font = 2)
+}
+
+forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", col = COL$ink, xlab = "estimate", xlim = NULL) {
+  n <- length(est); y <- n:1
+  rng <- range(c(est, lo, hi, ref), na.rm = TRUE)
+  if (is.null(xlim)) xlim <- rng + c(-1, 1) * diff(rng) * 0.08
+  op <- par(mar = c(4.5, min(22, max(8, 0.62 * max(nchar(lab)) + 1)), 1.5, 1), las = 1, bty = "n", col.axis = COL$muted)
+  on.exit(par(op))
+  plot(NA, xlim = xlim, ylim = c(0.5, n + 0.5), axes = FALSE, xlab = xlab, ylab = "")
+  abline(h = y, col = "#F0EBE3")
+  if (!is.null(ref)) {
+    abline(v = ref, lty = 2, col = COL$muted); pos <- (ref[1] - xlim[1]) / diff(xlim)
+    mtext(ref_lab, 3, at = ref[1], adj = if (pos > 0.7) 1 else if (pos < 0.3) 0 else 0.5, cex = .8, col = COL$muted)
+  }
+  ok <- !is.na(lo)
+  segments(lo[ok], y[ok], hi[ok], y[ok], lwd = 3, col = rep_len(col, n)[ok])
+  points(est, y, pch = 19, cex = 1.5, col = rep_len(col, n))
+  axis(1); axis(2, at = y, labels = lab, tick = FALSE, col.axis = COL$ink)
+}
+</script></div></details>
+
+<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01–02</td><td>一份資料：真值、直接相減、overlap</td><td>56–59、93</td></tr><tr><td>03</td><td>同一份資料，四種組合 vs 真值</td><td>81、83–84</td></tr><tr><td>04–05</td><td>10 份資料：bias、RMSE、coverage</td><td>87、92</td></tr></table>
+<div class="note note"><p>資料：Hill (2011) 建構的 IHDP 半合成 benchmark，使用 CEVAE 公開的 10 份（ihdp_npci_1–10；每份 747 人、25 個共變數）。Karim (2026) 用 50 份，所以這裡的覆蓋率蒙地卡羅誤差比較大（約 ±7%），看方向，不要看小數點。真值定義為這份資料的 E[μ₁(X) − μ₀(X)]。</p></div>
+<h2><span class="n">01</span>一份資料：真值與直接相減</h2>
+<div class="cell"><script type="text/r">
+d <- load_ihdp(1)
+c(n = length(d$A), treated = sum(d$A), truth = d$truth, naive_difference = mean(d$Y[d$A == 1]) - mean(d$Y[d$A == 0]))
+</script></div>
+<div class="look"><b>看什麼：</b><p>真值約 4.0，直接相減約 4.0——這份剛好偏得不多。但「剛好」不能靠：其他份差多少，第 04 格會看到。這份資料檔裡同時存了 μ₀(X)、μ₁(X)（兩個世界的期望值），真實研究永遠不會有這兩欄。</p></div>
+<h2><span class="n">02</span>overlap<span class="slide">投影片 93</span></h2>
+<div class="cell"><script type="text/r">
+nu <- nuisance(d, "glm", "full")
+round(overlap_summary(nu$g_raw, d$A), 3)
+overlap_plot(nu$g_raw, d$A, labels = c("treated", "control"))
+</script></div>
+<div class="look"><b>看什麼：</b><p>介入組只有 139 人，ĝ 最大只有 0.60；約 4% 的人 ĝ 小於 0.025 被截斷，最大權重約 30，介入組的有效樣本數剩 83（原本 139）。overlap 比 NHEFS 差、比 LaLonde 好很多——樣本又小，等一下 CI 的寬度會反映這件事。</p></div>
+<h2><span class="n">03</span>同一份資料，四種組合 vs 真值<span class="slide">投影片 81、83–84</span></h2>
+<div class="cell"><script type="text/r">
+res1 <- do.call(rbind, lapply(c("glm", "rf"), function(lr) do.call(rbind, lapply(c("full", "crossfit"), function(sc)
+  panel(d, nuisance(d, lr, sc, seed = 1, ntree = 100), paste(lr, sc))))))
+res1$error <- res1$est - d$truth
+res1$covers <- res1$lo <= d$truth & d$truth <= res1$hi
+res1
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>這一份資料上偏最多的是 <b>RF 的 g-computation</b>（約 −0.3 到 −0.4）：random forest 把 A 的效果平滑掉了（Lab 6 看過的那個問題）。GLM 的 g-computation 這一份只偏 −0.09——但第 04 格會看到，平均起來它偏得最多。</li><li>RF full sample：AIPW 偏低、TMLE 偏高，CI 卻只有 ±0.1，兩個都沒蓋到真值（covers = FALSE）。又錯、又很有自信。</li><li>RF cross-fit：誤差回到 0.05 以內，CI 寬回到 ±0.27，都蓋到。</li></ul></div>
+<h2><span class="n">04</span>10 份資料：誰對準了？CI 真的有 95% 嗎？<span class="slide">投影片 87、92</span></h2>
+<p>每一份都跑一次 {GLM, RF} × {full, cross-fit}。瀏覽器約 2 分鐘。把 <code>R</code> 改成 5 可以更快。</p>
+<div class="cell"><script type="text/r">
+R <- 10
+runs <- do.call(rbind, lapply(seq_len(R), function(r) { dr <- load_ihdp(r)
+  do.call(rbind, lapply(c("glm", "rf"), function(lr) do.call(rbind, lapply(c("full", "crossfit"), function(sc) {
+    p <- panel(dr, nuisance(dr, lr, sc, seed = r, ntree = 100), sc); p$learner <- lr; p$r <- r; p$truth <- dr$truth; p })))) }))
+runs$err <- runs$est - runs$truth
+runs$cover <- runs$lo <= runs$truth & runs$truth <= runs$hi
+grade <- aggregate(cbind(bias = err, mse = err^2, coverage = cover, ci_width = hi - lo) ~ learner + scheme + estimator,
+                   data = runs, FUN = mean, na.action = na.pass)
+grade$rmse <- sqrt(grade$mse); grade$mse <- NULL
+grade <- grade[order(grade$estimator, grade$learner, grade$scheme), ]
+print(grade, digits = 3, row.names = FALSE)
+</script></div>
+<h2><span class="n">05</span>畫成 Karim 的三格圖：bias、RMSE、coverage</h2>
+<div class="cell"><script type="text/r">
+g <- grade[grade$estimator %in% c("AIPW", "TMLE"), ]
+lab <- paste(g$learner, g$scheme, g$estimator)
+col <- ifelse(g$scheme == "full", COL$red, COL$teal)
+par(mfrow = c(1, 3), mar = c(4.5, 1, 2, 1), oma = c(0, 12, 0, 0), las = 1, bty = "n")
+y <- nrow(g):1
+plot(g$bias, y, pch = 19, col = col, cex = 1.6, xlim = range(c(0, g$bias)) * 1.2, yaxt = "n", xlab = "bias", main = "Bias (0 is best)")
+abline(v = 0, lty = 2); axis(2, at = y, labels = lab, outer = TRUE, tick = FALSE, col.axis = COL$ink, cex.axis = 1.15)
+plot(g$rmse, y, pch = 19, col = col, cex = 1.6, xlim = c(0, max(g$rmse) * 1.1), yaxt = "n", xlab = "RMSE", main = "RMSE (lower is better)")
+plot(g$coverage, y, pch = 19, col = col, cex = 1.6, xlim = c(0, 1.05), yaxt = "n", xlab = "coverage", main = "95% CI coverage")
+abline(v = 0.95, lty = 2)
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>右圖最重要：RF full sample（紅點）的 CI 只蓋到真值 2–3 次（10 次裡），因為過擬合讓 SE 被低估；cross-fit（藍點）回到 10/10，平均 CI 寬從約 0.53 變成約 1.27。</li><li>中圖右下角那個點：RF full TMLE 的 RMSE 約 1.3，比別人大三倍——10 份裡有一份，TMLE 拿過擬合的 Q̂ 去 fluctuate，整個飛掉。平均 bias 看起來不大，是因為有正有負互相抵掉；這就是為什麼要同時看 bias 和 RMSE。</li><li>GLM 的 full 和 cross-fit 覆蓋率都是 1.0：低容量的模型背不起來，所以 full sample 也沒事——和 Lab 6 的 GLM 一樣。但 GLM cross-fit 的 RMSE 和 CI 寬度（約 2.7）反而比 full 大：747 人切 5 折，每次只用 600 人去配 25 個變數的 logistic，ĝ 更不穩、極端權重更多。<b>cross-fitting 不是免費的</b>——樣本小、模型本來就不會背答案的時候，它的代價可能大於好處（Lab 4 第 05 格的「想一想」）。</li><li>覆蓋率 1.0 不是「剛好 95%」，而是偏保守（CI 偏寬）；Karim 用 50 份資料看到 DML／CV-TMLE 0.99，也是保守的。</li></ul></div>
+<details class="think"><summary>想一想：只有 10 份資料，覆蓋率 0.3 和 1.0 的差別可信嗎？</summary><p>覆蓋率的蒙地卡羅標準誤約 √(p(1−p)/10)：p = 0.95 時約 0.07。0.3 和 1.0 差了 0.7，遠超過這個誤差，方向可信；但 0.9 和 1.0 的差別就不能下結論。Karim 也提醒：MCSE 要以「獨立的資料份數」為單位算，同一份資料換 20 種切法不會變成 20 份獨立資料。</p></details>
+<details class="think"><summary>想一想：為什麼 GLM 的 g-computation bias 那麼大（約 −0.7），AIPW 卻小很多？</summary><p>IHDP 的結果是用非線性公式生成的，主效應線性模型的 Q̂ 系統性地錯了（first-order bias）。AIPW 的修正項用 ĝ 加權的殘差把它補回來——這就是 Lab 4 第 03 格「Q 錯、g 大致對」那一格的 double robustness，在真實共變數上親眼看到。</p></details>
+<p class="punch">在不知道真值的資料上，「幾個方法一致」只是安心；在知道真值的資料上，才看得到誰的 CI 在說謊。</p>
+<nav class="pager"><a href="06_rhc.html">← 6 RHC</a><a href="08_lalonde.html">8 LaLonde →</a></nav>
+</main>
+<script type="module" src="web/runner.js?v=8"></script>
+</body>
+</html>

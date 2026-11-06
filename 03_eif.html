@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 3　神奇糖果（中）：用 EIF 把一階誤差扣掉——AIPW 與 TMLE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="web/style.css?v=8">
+<script type="importmap">
+{
+ "imports": {
+  "@codemirror/state": "https://esm.sh/*@codemirror/state@6.4.1",
+  "@codemirror/view": "https://esm.sh/*@codemirror/view@6.26.3",
+  "@codemirror/language": "https://esm.sh/*@codemirror/language@6.10.1",
+  "@codemirror/commands": "https://esm.sh/*@codemirror/commands@6.5.0",
+  "@codemirror/legacy-modes/mode/r": "https://esm.sh/*@codemirror/legacy-modes@6.4.0/mode/r",
+  "@lezer/common": "https://esm.sh/*@lezer/common@1.2.1",
+  "@lezer/highlight": "https://esm.sh/*@lezer/highlight@1.2.0",
+  "@lezer/lr": "https://esm.sh/*@lezer/lr@1.4.0",
+  "style-mod": "https://esm.sh/*style-mod@4.1.2",
+  "w3c-keyname": "https://esm.sh/*w3c-keyname@2.2.8"
+ }
+}
+</script>
+</head>
+<body data-files="" data-packages="">
+<header class="top"><div class="wrap">
+  <a class="home" href="index.html">Pokémon-CP Lab</a>
+  <nav class="labs"><a href="01_ml.html">1 找函式</a><a href="02_plugin.html">2 plug-in</a><a href="03_eif.html" aria-current="page">3 EIF 修正</a><a href="04_remainder.html">4 剩下什麼</a><a href="05_nhefs.html">5 NHEFS</a><a href="06_rhc.html">6 RHC</a><a href="07_ihdp.html">7 IHDP</a><a href="08_lalonde.html">8 LaLonde</a></nav>
+  <span id="status">準備中…</span>
+</div></header>
+<main>
+<p class="kicker">Lab 3　神奇糖果（中）</p>
+<h1>用 EIF 把一階誤差扣掉——AIPW 與 TMLE</h1>
+<p class="lead">Lab 2 的 plug-in 偏了 3.4，而且偏差跟著 Q̂ 走。怎麼辦？先問一個更基本的問題：資料多一個人，答案會動多少？把這個「動多少」寫成公式，就是 efficient influence function（EIF）。有了它，修正方法就自然冒出來了：加回去（AIPW），或者推 Q̂（TMLE）。對應投影片 70–84。</p>
+<div class="actions"><button id="runall" disabled>▶ 全部執行</button><span class="time">全部約 30 秒</span>
+<a class="colab" href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/03_eif.ipynb" target="_blank" rel="noopener">在 Colab 開啟</a>
+<a class="dl" href="colab/03_eif.ipynb" download>下載 .ipynb</a></div>
+<details class="toolbox"><summary>工具箱：這一頁用到的 R 函式（會自動先執行；點開可以看每一行）</summary>
+<div class="cell" data-label="工具箱"><script type="text/r">
+# ---- estimators: one set of nuisance predictions -> different answers ----
+# Notation (same as the slides): O = (X, A, Y)
+#   Q(a, X) = E[Y | A = a, X]            outcome regression   -> nu$Q1, nu$Q0
+#   g(X)    = P(A = 1 | X)               propensity score     -> nu$g
+#   H(A, X) = A / g - (1 - A) / (1 - g)  clever covariate
+#   D(O; g, Q, psi) = H (Y - Q_A) + Q1 - Q0 - psi   efficient influence function of the ATE
+expit <- function(x) 1 / (1 + exp(-x))
+bound <- function(p, lo = 0.025, hi = 0.975) pmin(pmax(p, lo), hi)
+
+est_plugin <- function(nu) mean(nu$Q1 - nu$Q0)               # g-computation: predict twice, subtract, average
+
+est_ipw_ht <- function(dat, nu)                               # Horvitz-Thompson IPTW: divide by n
+  mean(dat$A * dat$Y / nu$g - (1 - dat$A) * dat$Y / (1 - nu$g))
+
+est_ipw <- function(dat, nu) {                                # Hajek (stabilized) IPTW: divide by the sum of weights
+  w1 <- dat$A / nu$g; w0 <- (1 - dat$A) / (1 - nu$g)
+  sum(w1 * dat$Y) / sum(w1) - sum(w0 * dat$Y) / sum(w0)
+}
+
+eif <- function(dat, nu, psi) {
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  QA <- ifelse(dat$A == 1, nu$Q1, nu$Q0)
+  H * (dat$Y - QA) + nu$Q1 - nu$Q0 - psi
+}
+
+wald <- function(psi, D) {                                    # SE from the EIF: sqrt(mean(D^2) / n)
+  se <- sqrt(mean(D^2) / length(D))
+  c(est = psi, se = se, lo = psi - 1.96 * se, hi = psi + 1.96 * se)
+}
+
+est_aipw <- function(dat, nu) {                               # one-step: psi_plug + P_n D  (solves P_n D = 0)
+  psi <- mean(eif(dat, nu, 0))
+  wald(psi, eif(dat, nu, psi))
+}
+
+est_tmle <- function(dat, nu, ybounds = range(dat$Y)) {       # targeting: move Q-hat along H until P_n D = 0
+  lo <- ybounds[1]; hi <- ybounds[2]
+  sc <- function(y) pmin(pmax((y - lo) / (hi - lo), 1e-6), 1 - 1e-6)
+  Ys <- (dat$Y - lo) / (hi - lo)
+  Q1s <- sc(nu$Q1); Q0s <- sc(nu$Q0); QAs <- ifelse(dat$A == 1, Q1s, Q0s)
+  H  <- dat$A / nu$g - (1 - dat$A) / (1 - nu$g)
+  fl <- suppressWarnings(glm(Ys ~ -1 + H, offset = qlogis(QAs), family = quasibinomial()))
+  eps <- unname(coef(fl))
+  Q1t <- expit(qlogis(Q1s) + eps / nu$g)
+  Q0t <- expit(qlogis(Q0s) - eps / (1 - nu$g))
+  nu_t <- data.frame(Q1 = lo + (hi - lo) * Q1t, Q0 = lo + (hi - lo) * Q0t, g = nu$g)
+  psi <- mean(nu_t$Q1 - nu_t$Q0)
+  c(wald(psi, eif(dat, nu_t, psi)), eps = eps)
+}
+
+weight_summary <- function(dat, nu) {                         # largest weight and effective sample size (ESS)
+  w <- ifelse(dat$A == 1, 1 / nu$g, 1 / (1 - nu$g))
+  c(max_weight = max(w),
+    ESS_treated = sum(w[dat$A == 1])^2 / sum(w[dat$A == 1]^2), n_treated = sum(dat$A),
+    ESS_control = sum(w[dat$A == 0])^2 / sum(w[dat$A == 0]^2), n_control = sum(1 - dat$A))
+}
+
+# ---- magic candy: simulated data, so the truth (Q, g, psi) is known ----
+species_levels <- c("Pidgey", "Weedle", "Caterpie", "Eevee")
+
+simulate_candy <- function(n = 800, seed = NULL, strength = 1) {
+  if (!is.null(seed)) set.seed(seed)
+  species <- factor(sample(species_levels, n, replace = TRUE, prob = c(.40, .20, .15, .25)), levels = species_levels)
+  top <- c(Pidgey = 450, Weedle = 260, Caterpie = 260, Eevee = 650)[as.character(species)]
+  cp  <- round(10 + top * rbeta(n, 2, 2.5))
+  mult <- c(Pidgey = 1.85, Weedle = 1.10, Caterpie = 1.08, Eevee = 2.60)[as.character(species)]
+  f0   <- mult * cp * (1 - cp / 2600)                         # evolution curve, bends at high CP
+  # trainers prefer strong Pokemon and Eevee: confounding. Larger strength -> g closer to 0 or 1
+  g0 <- expit(strength * (-1.8 + 3.2 * (cp / top)) + 0.5 * (species == "Eevee"))
+  A  <- rbinom(n, 1, g0)
+  tau <- 20 + 0.30 * cp                                       # candy effect: stronger Pokemon gain more
+  Y1 <- f0 + tau + rnorm(n, 0, 30)
+  Y0 <- f0 + rnorm(n, 0, 30)
+  data.frame(species, cp, A, Y = ifelse(A == 1, Y1, Y0), g0, Q1 = f0 + tau, Q0 = f0, Y1, Y0)
+}
+
+candy_truth <- function(n = 2e6, seed = 1) {                  # population ATE = E[tau(X)]
+  set.seed(seed)
+  species <- sample(species_levels, n, replace = TRUE, prob = c(.40, .20, .15, .25))
+  top <- c(Pidgey = 450, Weedle = 260, Caterpie = 260, Eevee = 650)[species]
+  mean(20 + 0.30 * round(10 + top * rbeta(n, 2, 2.5)))
+}
+candy_population <- function(n = 20000, seed = 2027, strength = 1) simulate_candy(n, seed, strength)
+
+# ---- nuisance learners ----
+knn_Q <- function(train, newdata, a, k = 10) {                # same species, same arm, k nearest CP, average Y
+  out <- rep(NA_real_, nrow(newdata))
+  for (s in levels(newdata$species)) {
+    tr <- train[train$species == s & train$A == a, ]
+    id <- which(newdata$species == s)
+    if (length(id) == 0) next
+    if (nrow(tr) == 0) { out[id] <- mean(train$Y[train$A == a]); next }
+    kk <- min(k, nrow(tr))
+    D  <- abs(outer(newdata$cp[id], tr$cp, "-"))
+    out[id] <- apply(D, 1, function(d) mean(tr$Y[order(d)[seq_len(kk)]]))
+  }
+  out
+}
+lin_Q <- function(train, newdata, a) predict(lm(Y ~ A + species + cp, data = train), transform(newdata, A = a))  # one straight line (slide 62)
+logit_g <- function(train, newdata) {                        # each species its own intercept and slope
+  fit <- glm(A ~ species + species:cp, family = binomial, data = train)
+  bound(predict(fit, newdata, type = "response"))
+}
+
+fit_nuisance <- function(train, newdata, Qlearner = "knn", k = 10) {
+  if (Qlearner == "knn") { Q1 <- knn_Q(train, newdata, 1, k); Q0 <- knn_Q(train, newdata, 0, k) }
+  else { Q1 <- lin_Q(train, newdata, 1); Q0 <- lin_Q(train, newdata, 0) }
+  data.frame(Q1 = Q1, Q0 = Q0, g = logit_g(train, newdata))
+}
+nuisance_full <- function(dat, ...) fit_nuisance(dat, dat, ...)          # train and predict on the same Pokemon
+nuisance_crossfit <- function(dat, K = 5, seed = NULL, ...) {             # each prediction comes from the other folds
+  if (!is.null(seed)) set.seed(seed)
+  fold <- sample(rep(seq_len(K), length.out = nrow(dat)))
+  nu <- data.frame(Q1 = NA_real_, Q0 = NA_real_, g = NA_real_)[rep(1, nrow(dat)), ]
+  for (k in seq_len(K)) { te <- fold == k; nu[te, ] <- fit_nuisance(dat[!te, ], dat[te, ], ...) }
+  rownames(nu) <- NULL
+  nu
+}
+
+all_estimates <- function(dat, k = 10, K = 5) {
+  nf <- nuisance_full(dat, k = k); nc <- nuisance_crossfit(dat, K = K, k = k)
+  rbind(naive       = c(est = mean(dat$Y[dat$A == 1]) - mean(dat$Y[dat$A == 0]), se = NA, lo = NA, hi = NA),
+        linear      = c(est = unname(coef(lm(Y ~ A + species + cp, data = dat))["A"]), se = NA, lo = NA, hi = NA),
+        plugin_knn  = c(est = est_plugin(nf), se = NA, lo = NA, hi = NA),
+        ipw         = c(est = est_ipw(dat, nf), se = NA, lo = NA, hi = NA),
+        aipw_full   = est_aipw(dat, nf),
+        tmle_full   = est_tmle(dat, nf)[1:4],
+        aipw_cf_DML = est_aipw(dat, nc),
+        tmle_cf     = est_tmle(dat, nc)[1:4])
+}
+
+# ---- only a simulation can do this: split the error into pieces ----
+#   plug-in: psi_plug - psi = sampling + first-order bias + empirical process
+#   AIPW   : psi_AIPW - psi = (P_n - P)D + R2 + empirical process
+# "P" (population mean) is approximated by a large population `pop`
+decompose_candy <- function(dat, pop, k = 10, scheme = c("full", "crossfit"), K = 5, seed = 1) {
+  scheme <- match.arg(scheme)
+  psi <- candy_truth(); n <- nrow(dat)
+  set.seed(seed)
+  fold <- if (scheme == "full") rep(1L, n) else sample(rep(seq_len(K), length.out = n))
+  nu <- data.frame(Q1 = numeric(n), Q0 = numeric(n), g = numeric(n))
+  first_order <- 0; R2 <- 0; gerr <- 0; qerr <- 0
+  for (f in unique(fold)) {
+    te <- fold == f
+    tr <- if (scheme == "full") rep(TRUE, n) else !te
+    nu[te, ] <- fit_nuisance(dat[tr, ], dat[te, ], k = k)
+    np <- fit_nuisance(dat[tr, ], pop, k = k)                 # the same model, evaluated on the population
+    w <- mean(te)
+    r2_unit <- (np$g - pop$g0) / np$g * (np$Q1 - pop$Q1) + (np$g - pop$g0) / (1 - np$g) * (np$Q0 - pop$Q0)
+    fo_unit <- (np$Q1 - pop$Q1) - (np$Q0 - pop$Q0)
+    first_order <- first_order + w * mean(fo_unit)
+    R2 <- R2 + w * mean(r2_unit)
+    if (f == fold[1]) units <- data.frame(species = pop$species, cp = pop$cp, g_err = np$g - pop$g0,
+                                          Q1_err = np$Q1 - pop$Q1, Q0_err = np$Q0 - pop$Q0,
+                                          R2_unit = r2_unit, first_order_unit = fo_unit)
+    gerr <- gerr + w * mean((np$g - pop$g0)^2)
+    qerr <- qerr + w * mean(((np$Q1 - pop$Q1)^2 + (np$Q0 - pop$Q0)^2) / 2)
+  }
+  plug <- mean(nu$Q1 - nu$Q0)
+  aipw <- est_aipw(dat, nu)[["est"]]
+  samp_plug <- mean(dat$Q1 - dat$Q0) - psi
+  samp_aipw <- mean(eif(dat, data.frame(Q1 = dat$Q1, Q0 = dat$Q0, g = dat$g0), psi))   # (P_n - P)D, since PD = 0
+  list(plugin = c(total = plug - psi, sampling = samp_plug, first_order = first_order,
+                  emp_process = plug - psi - samp_plug - first_order),
+       aipw = c(total = aipw - psi, sampling = samp_aipw, R2 = R2, emp_process = aipw - psi - samp_aipw - R2),
+       L2 = c(g = sqrt(gerr), Q = sqrt(qerr), product = sqrt(gerr) * sqrt(qerr)),
+       units = units)                                         # per-Pokemon errors (first fold's model), for plots
+}
+
+# Neyman orthogonality: move g and Q away from the truth by t, compare the two moments
+orthogonality_curves <- function(pop, ts = seq(-1, 1, by = 0.05), dq1 = 40, dq0 = -20, dg = 0.6) {
+  g <- pop$g0; Q1 <- pop$Q1; Q0 <- pop$Q0
+  psi <- mean(Q1 - Q0)
+  gbar <- g + dg * g * (1 - g)
+  eif_moment <- function(t, move_g, move_Q) {
+    gt <- if (move_g) g + t * (gbar - g) else g
+    q1 <- if (move_Q) Q1 + t * dq1 else Q1
+    q0 <- if (move_Q) Q0 + t * dq0 else Q0
+    mean(q1 - q0 + g / gt * (Q1 - q1) - (1 - g) / (1 - gt) * (Q0 - q0)) - psi
+  }
+  data.frame(t = ts, plugin_Q = ts * (dq1 - dq0),
+             eif_Q_only = sapply(ts, eif_moment, move_g = FALSE, move_Q = TRUE),
+             eif_g_only = sapply(ts, eif_moment, move_g = TRUE, move_Q = FALSE),
+             eif_both   = sapply(ts, eif_moment, move_g = TRUE, move_Q = TRUE))
+}
+
+# smallest possible SE: sqrt(V_eff / n), V_eff = E[sigma^2/g + sigma^2/(1-g)] + Var(tau), sigma = 30
+candy_se_bound <- function(pop, n) sqrt((mean(30^2 / pop$g0 + 30^2 / (1 - pop$g0)) + var(pop$Q1 - pop$Q0)) / n)
+
+# ---- plotting helpers (base graphics only) ----
+COL <- list(red = "#D9480F", teal = "#0B7285", ink = "#1C1B19", muted = "#6B665E",
+            gold = "#C98A0C", plum = "#7B3F8C", rule = "#DDD6CA")
+lab_par <- function(...) par(mar = c(4.5, 5, 1.5, 1), las = 1, bty = "n", col.axis = COL$muted, ...)
+
+overlap_plot <- function(g_raw, A, xlab = "estimated propensity score  g-hat(X)", labels = c("A = 1", "A = 0"), breaks = 40) {
+  br <- seq(0, 1, length.out = breaks + 1)                    # mirrored histogram: treated up, control down
+  h1 <- hist(pmin(pmax(g_raw[A == 1], 0), 1), breaks = br, plot = FALSE)$counts
+  h0 <- hist(pmin(pmax(g_raw[A == 0], 0), 1), breaks = br, plot = FALSE)$counts
+  lab_par()
+  plot(NA, xlim = c(0, 1), ylim = c(-max(h0), max(h1)), axes = FALSE, xlab = xlab, ylab = "count")
+  axis(1); yt <- pretty(c(-max(h0), max(h1))); axis(2, at = yt, labels = abs(yt))
+  rect(br[-length(br)], 0, br[-1], h1, col = adjustcolor(COL$red, .8), border = "white")
+  rect(br[-length(br)], 0, br[-1], -h0, col = adjustcolor(COL$teal, .8), border = "white")
+  abline(h = 0)
+  text(0.98, max(h1) * .85, labels[1], adj = 1, col = COL$red, font = 2)
+  text(0.98, -max(h0) * .85, labels[2], adj = 1, col = COL$teal, font = 2)
+}
+
+forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", col = COL$ink, xlab = "estimate", xlim = NULL) {
+  n <- length(est); y <- n:1
+  rng <- range(c(est, lo, hi, ref), na.rm = TRUE)
+  if (is.null(xlim)) xlim <- rng + c(-1, 1) * diff(rng) * 0.08
+  op <- par(mar = c(4.5, min(22, max(8, 0.62 * max(nchar(lab)) + 1)), 1.5, 1), las = 1, bty = "n", col.axis = COL$muted)
+  on.exit(par(op))
+  plot(NA, xlim = xlim, ylim = c(0.5, n + 0.5), axes = FALSE, xlab = xlab, ylab = "")
+  abline(h = y, col = "#F0EBE3")
+  if (!is.null(ref)) {
+    abline(v = ref, lty = 2, col = COL$muted); pos <- (ref[1] - xlim[1]) / diff(xlim)
+    mtext(ref_lab, 3, at = ref[1], adj = if (pos > 0.7) 1 else if (pos < 0.3) 0 else 0.5, cex = .8, col = COL$muted)
+  }
+  ok <- !is.na(lo)
+  segments(lo[ok], y[ok], hi[ok], y[ok], lwd = 3, col = rep_len(col, n)[ok])
+  points(est, y, pch = 19, cex = 1.5, col = rep_len(col, n))
+  axis(1); axis(2, at = y, labels = lab, tick = FALSE, col.axis = COL$ink)
+}
+</script></div></details>
+
+<table class="map"><tr><th>格</th><th>投影片</th><th>這格回答的問題</th></tr><tr><td>01</td><td>60、79</td><td>同一份糖果資料、同一組 nuisance</td></tr><tr><td>02–03</td><td>70–72</td><td>多一個人，平均動多少？分組平均動多少？（EIF 的兩塊積木）</td></tr><tr><td>04</td><td>73–77</td><td>拼出 D(O)：它真的平均為 0 嗎？它的變異數是什麼？</td></tr><tr><td>05–06</td><td>78–83</td><td>修法一：加回去（AIPW）；修法二：推 Q̂（TMLE）</td></tr><tr><td>07</td><td>84</td><td>兩個修法解的是同一個方程式</td></tr></table>
+<div class="note warn"><p><b>以下有一點數學，但每一步都有數字可以對。</b>看不懂公式也沒關係，只要記得一句話：EIF 告訴你「每一個人把答案往哪邊推、推多大力」；把大家推的力平均起來，就是 plug-in 欠的那一塊。</p></div>
+<h2><span class="n">01</span>同一份資料、同一組 nuisance<span class="slide">投影片 60、79</span></h2>
+<p>和 Lab 2 一模一樣：1,500 隻寶可夢，Q̂ 用 kNN（k = 10），ĝ 用 logistic regression。plug-in 是 84.22，真值 80.82。</p>
+<div class="cell"><script type="text/r">
+truth <- candy_truth()
+d  <- simulate_candy(1500, seed = 2026)
+nf <- nuisance_full(d, k = 10)
+c(truth = truth, plugin = est_plugin(nf))
+</script></div>
+<h2><span class="n">02</span>積木 1：多一個人，平均動多少？<span class="slide">投影片 70–71</span></h2>
+<p>最簡單的參數：平均數 μ = E(Y)。現在資料裡多一隻 Y 很高的寶可夢，平均會被往上推。推多少？大約是 (Y<sub>new</sub> − 平均)/n——離平均越遠，推越大力。這個「每個人的推力」<code>Y − E(Y)</code>，就是平均數的 influence function。</p>
+<div class="cell"><script type="text/r">
+y <- d$Y; n <- length(y)
+for (y_new in c(300, 800, 1500)) {
+  actual <- mean(c(y, y_new)) - mean(y)                       # how much the mean really moves
+  approx <- (y_new - mean(y)) / (n + 1)                       # influence function / (n + 1)
+  cat(sprintf("new Y = %4d   mean moves %+.3f   (Y_new - mean) / (n + 1) = %+.3f\n", y_new, actual, approx))
+}
+</script></div>
+<div class="look"><b>看什麼：</b><p>三個數字完全對上。Y = 300 的那隻比平均低，把平均往下拉；Y = 1500 的那隻往上推很多。<b>influence function 其實就是「多一個人，答案動多少」，乘上 n 而已。</b></p></div>
+<h2><span class="n">03</span>積木 2：分組平均——只有那一組的人會推動它<span class="slide">投影片 71–72</span></h2>
+<p>分組平均 E(Y | X = x)，比如「伊布的平均 CP」。多一隻皮皮（Pidgey），伊布的平均不會動；多一隻伊布，才會動。而且伊布越少，每一隻推得越大力：推力是 <code>I(X = x) / P(X = x) · {Y − E(Y | X = x)}</code>。</p>
+<div class="cell"><script type="text/r">
+is_ev <- d$species == "Eevee"; p_ev <- mean(is_ev); m_ev <- mean(d$Y[is_ev])
+new_ev <- data.frame(species = "Eevee", Y = 1500); new_pg <- data.frame(species = "Pidgey", Y = 1500)
+move <- function(new) { s <- c(as.character(d$species), new$species); yy <- c(d$Y, new$Y); mean(yy[s == "Eevee"]) - m_ev }
+rbind(add_an_Eevee  = c(actual = move(new_ev), formula = 1 / p_ev * (1500 - m_ev) / (n + 1)),
+      add_a_Pidgey  = c(actual = move(new_pg), formula = 0))
+c(share_of_Eevee = p_ev, push_multiplier = 1 / p_ev)
+</script></div>
+<div class="look"><b>看什麼：</b><p>多一隻伊布，伊布平均動了；多一隻皮皮，完全不動（第一項 I(X = x) = 0）。伊布只占約四分之一，所以每一隻伊布的推力被放大約 4 倍——<b>那一組越稀有，每個人推得越大力。</b>等一下你會在 D(O) 裡看到同一個東西：1/g。</p></div>
+<h2><span class="n">04</span>拼出 D(O)：先在四個人身上，再用真的 g、Q 檢查<span class="slide">投影片 73–77</span></h2>
+<p>用加法規則和乘法規則把兩塊積木拼起來，ATE 的 EIF 是 <code>D(O; g, Q, ψ) = H(A, X){Y − Q_A(X)} + Q₁(X) − Q₀(X) − ψ</code>，H = A/g − (1−A)/(1−g)。先用人造的四個人只看 ψ₁ 那一半：預測是 0.4，修正之後是多少？</p>
+<div class="cell"><script type="text/r">
+toy <- data.frame(A = c(1, 0, 1, 0), Y = c(1, 0, 0, 1), Q1hat = c(.2, .2, .6, .6), ghat = c(.5, .5, .25, .25))
+toy$contribution <- with(toy, Q1hat + A * (Y - Q1hat) / ghat)    # one-step contribution for psi_1
+toy
+c(plugin = mean(toy$Q1hat), one_step = mean(toy$contribution))    # 0.4 -> 0.2
+true_nu <- data.frame(Q1 = d$Q1, Q0 = d$Q0, g = d$g0)             # the true nuisances: only a simulation has them
+D <- eif(d, true_nu, truth)
+pop <- candy_population(20000)
+c(mean_D = mean(D), sd_D = sd(D), SE_from_D = sd(D) / sqrt(n), efficiency_bound_SE = candy_se_bound(pop, n))
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>第 3 個人預測 0.6、實際 0，殘差 −0.6，ĝ = 0.25 → 放大 4 倍，把 plug-in 從 0.4 拉到 0.2。個人貢獻可以小於 0，它不是機率。</li><li>代真的 g、Q：1,500 隻的 D 平均約 0（只剩抽樣波動）——<b>平均為 0。</b></li><li>D 的標準差除以 √n 約 1.91，和理論上任何估計器都打不破的下界 <code>√(V_eff / n)</code>（約 1.89）幾乎一樣——<b>變異數就是效率界。</b>投影片 77 的兩句話，在這裡變成兩個數字。</li></ul></div>
+<h2><span class="n">05</span>修法一：把一階項估出來，加回去（AIPW）<span class="slide">投影片 78–81</span></h2>
+<p>泰勒展開告訴我們：<code>ψ̂_plug − ψ ≈ −P D(O; ĝ, Q̂, ψ̂_plug)</code>。真實分布 P 我們拿不到，就用樣本平均 ℙn 代替，把它加回去：<code>ψ̂ = ψ̂_plug + ℙn D(O; ĝ, Q̂, ψ̂_plug)</code>。代入 D 的定義，ψ̂_plug 自己消掉，就是 AIPW。</p>
+<div class="cell"><script type="text/r">
+plug <- est_plugin(nf)
+one_step <- plug + mean(eif(d, nf, plug))        # psi_plug + P_n D-hat
+H  <- d$A / nf$g - (1 - d$A) / (1 - nf$g); QA <- ifelse(d$A == 1, nf$Q1, nf$Q0)
+c(plugin = plug, correction = mean(H * (d$Y - QA)), one_step = one_step, truth = truth)
+est_aipw(d, nf)                                   # same number, plus an EIF-based SE and 95% CI
+mean(eif(d, nf, one_step))                        # P_n D(O; g-hat, Q-hat, psi_AIPW) = 0
+</script></div>
+<div class="look"><b>看什麼：</b><p>plug-in 84.22 + 修正項 −3.88 = 80.34，真值 80.82——投影片 81 的那條算式。最後一行驗證投影片 79 那句話：AIPW 剛好讓 ℙ<sub>n</sub>D̂ = 0。修正項是什麼？就是第 03 格的推力：每一隻的殘差 Y − Q̂<sub>A</sub>，乘上 1/ĝ（越少見的那一臂，推得越大力），平均起來。</p></div>
+<h2><span class="n">06</span>修法二：不改答案，改 Q̂（TMLE）<span class="slide">投影片 82–83</span></h2>
+<p>AIPW 是答案算完再加一個修正項。TMLE 反過來：先把 Q̂ 沿著 H 的方向推一點點，推到 ℙ<sub>n</sub>D = 0 為止，再 plug in。<code>logit Q̂ε(a, X) = logit Q̂(a, X) + ε·H(a, X)</code>。Y 先縮到 [0, 1]，對 H 做沒有截距、以 logit Q̂ 為 offset 的 logistic regression，估出 ε̂。</p>
+<div class="cell"><script type="text/r">
+tm <- est_tmle(d, nf); tm
+lo <- min(d$Y); hi <- max(d$Y); sc <- function(y) pmin(pmax((y - lo) / (hi - lo), 1e-6), 1 - 1e-6)
+QAs <- sc(QA); QAstar <- expit(qlogis(QAs) + tm[["eps"]] * H)        # updated prediction for the observed arm
+c(score_before = mean(H * ((d$Y - lo) / (hi - lo) - QAs)), score_after = mean(H * ((d$Y - lo) / (hi - lo) - QAstar)))
+</script></div>
+<div class="look"><b>看什麼：</b><p>ε̂ 很小（約 −0.003），因為 kNN 的 Q̂ 本來就不差。score 從 before 變成 after ≈ 0：logistic fit 的一階條件就是 ℙ<sub>n</sub>[Ĥ(Y − Q̂*<sub>A</sub>)] = 0。答案 80.37，和 AIPW 只差 0.03。</p></div>
+<h2><span class="n">07</span>同一個方程式，兩種解法<span class="slide">投影片 84</span></h2>
+<p>把 Lab 2、Lab 3 所有的答案放在一起，對著真值看。</p>
+<div class="cell"><script type="text/r">
+tab <- rbind(naive = c(est = mean(d$Y[d$A == 1]) - mean(d$Y[d$A == 0]), lo = NA, hi = NA),
+             linear = c(unname(coef(lm(Y ~ A + species + cp, data = d))["A"]), NA, NA),
+             plugin_kNN = c(plug, NA, NA), IPTW = c(est_ipw(d, nf), NA, NA),
+             AIPW = est_aipw(d, nf)[c("est", "lo", "hi")], TMLE = tm[c("est", "lo", "hi")])
+round(tab, 2)
+keep <- rownames(tab) != "naive"                                  # naive (229) would squash the x axis
+forest_plot(rownames(tab)[keep], tab[keep, 1], tab[keep, 2], tab[keep, 3], ref = truth, ref_lab = "truth 80.8",
+            col = c(COL$muted, COL$red, COL$gold, COL$teal, COL$teal), xlab = "ATE estimate (CP)")
+</script></div>
+<div class="look"><b>看什麼：</b><table><tr><th></th><th>AIPW（one-step）</th><th>TMLE（targeting）</th></tr><tr><td>怎麼讓 ℙ<sub>n</sub>D = 0</td><td>直接把殘差修正的平均加到答案上</td><td>先推 Q̂，讓殘差修正平均變 0</td></tr><tr><td>最後的答案</td><td>ψ̂_plug + ℙ<sub>n</sub>D̂</td><td>ℙ<sub>n</sub>(Q̂*₁ − Q̂*₀)</td></tr><tr><td>結果範圍</td><td>沒有保證（加法修正可能出界）</td><td>尊重 Y 的範圍</td></tr><tr><td>漸近性質</td><td>一樣：同一個 D、同一個效率界</td><td>一樣</td></tr></table>
+<p>圖上：直線、plug-in、IPTW 各自往一邊偏；AIPW、TMLE 的 CI 都蓋到真值。兩個答案幾乎重疊——因為它們解的是同一個方程式。結果範圍那一列，Lab 6（RHC，二元結果）會看到差別。</p></div>
+<h2><span class="n">08</span>帶走一句話</h2>
+<p class="punch">EIF 就是「每個人把答案推多少」。把推力平均起來加回去是 AIPW；把 Q̂ 推到推力平均為 0 是 TMLE。</p>
+<p>你可能會想說：修完就沒有誤差了嗎？沒有。泰勒展開還有一個二階項 R₂，還有「自己改考卷」那一塊。Lab 4 把剩下的東西一塊一塊拆開來看。</p>
+<nav class="pager"><a href="02_plugin.html">← 2 plug-in</a><a href="04_remainder.html">4 剩下什麼 →</a></nav>
+</main>
+<script type="module" src="web/runner.js?v=8"></script>
+</body>
+</html>

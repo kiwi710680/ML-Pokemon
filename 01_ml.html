@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lab 1　機器學習就是找一個函式</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="web/style.css?v=8">
+<script type="importmap">
+{
+ "imports": {
+  "@codemirror/state": "https://esm.sh/*@codemirror/state@6.4.1",
+  "@codemirror/view": "https://esm.sh/*@codemirror/view@6.26.3",
+  "@codemirror/language": "https://esm.sh/*@codemirror/language@6.10.1",
+  "@codemirror/commands": "https://esm.sh/*@codemirror/commands@6.5.0",
+  "@codemirror/legacy-modes/mode/r": "https://esm.sh/*@codemirror/legacy-modes@6.4.0/mode/r",
+  "@lezer/common": "https://esm.sh/*@lezer/common@1.2.1",
+  "@lezer/highlight": "https://esm.sh/*@lezer/highlight@1.2.0",
+  "@lezer/lr": "https://esm.sh/*@lezer/lr@1.4.0",
+  "style-mod": "https://esm.sh/*style-mod@4.1.2",
+  "w3c-keyname": "https://esm.sh/*w3c-keyname@2.2.8"
+ }
+}
+</script>
+</head>
+<body data-files="data/classroom_train10.csv,data/classroom_test10.csv,data/classroom_train60.csv" data-packages="">
+<header class="top"><div class="wrap">
+  <a class="home" href="index.html">Pokémon-CP Lab</a>
+  <nav class="labs"><a href="01_ml.html" aria-current="page">1 找函式</a><a href="02_plugin.html">2 plug-in</a><a href="03_eif.html">3 EIF 修正</a><a href="04_remainder.html">4 剩下什麼</a><a href="05_nhefs.html">5 NHEFS</a><a href="06_rhc.html">6 RHC</a><a href="07_ihdp.html">7 IHDP</a><a href="08_lalonde.html">8 LaLonde</a></nav>
+  <span id="status">準備中…</span>
+</div></header>
+<main>
+<p class="kicker">Lab 1</p>
+<h1>機器學習就是找一個函式</h1>
+<div class="actions"><button id="runall" disabled>▶ 全部執行</button><span class="time">全部約 1 分鐘</span>
+<a class="colab" href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/01_ml.ipynb" target="_blank" rel="noopener">在 Colab 開啟</a>
+<a class="dl" href="colab/01_ml.ipynb" download>下載 .ipynb</a></div>
+<details class="toolbox"><summary>工具箱：這一頁用到的 R 函式（會自動先執行；點開可以看每一行）</summary>
+<div class="cell" data-label="工具箱"><script type="text/r">
+# ---- Pokemon CP (classroom example; train/test split rebuilt from the slides) ----
+SPECIES <- c("Pidgey", "Weedle", "Caterpie", "Eevee")
+lee_err <- function(y, yhat) sqrt(sum((y - yhat)^2)) / length(y)   # the classroom "Average Error" is sqrt(SSE) / N
+read_pokemon <- function(file) { d <- read.csv(file); d$species <- factor(d$species, levels = SPECIES); d }
+
+X_species <- function(d) {                                    # each species its own intercept and slope (4 + 4)
+  S <- sapply(SPECIES, function(s) as.numeric(d$species == s)); cbind(S, S * d$cp)
+}
+X_extended <- function(d) {                                   # 18 parameters: species x (1, cp, cp^2) + hp, height, weight and squares
+  S <- sapply(SPECIES, function(s) as.numeric(d$species == s))
+  cbind(S, S * d$cp, S * d$cp^2, d$hp, d$hp^2, d$height, d$height^2, d$weight, d$weight^2)
+}
+ridge_fit <- function(X, y, lambda, n_free = 4) {             # L = sum (y - yhat)^2 + lambda sum w^2; species intercepts not penalized
+  p <- ncol(X); pen <- diag(c(rep(0, n_free), rep(sqrt(lambda), p - n_free)), p)
+  qr.coef(qr(rbind(X, pen[(n_free + 1):p, , drop = FALSE])), c(y, rep(0, p - n_free)))   # augmented least squares
+}
+knn_cp <- function(train, newdata, k) sapply(seq_len(nrow(newdata)), function(i) {
+  tr <- train[train$species == newdata$species[i], ]
+  mean(tr$cp_new[order(abs(tr$cp - newdata$cp[i]))[seq_len(min(k, nrow(tr)))]])
+})
+pokemon_candidates <- list(                                   # each candidate: training data -> predictions on new data
+  "linear (cp only)" = function(tr, nd) predict(lm(cp_new ~ cp, tr), nd),
+  "species-linear"   = function(tr, nd) X_species(nd) %*% qr.coef(qr(X_species(tr)), tr$cp_new),
+  "18-param OLS"     = function(tr, nd) X_extended(nd) %*% ridge_fit(X_extended(tr), tr$cp_new, 0),
+  "18-param ridge"   = function(tr, nd) X_extended(nd) %*% ridge_fit(X_extended(tr), tr$cp_new, 1e4),
+  "kNN (k = 3)"      = function(tr, nd) knn_cp(tr, nd, 3))
+strat_folds <- function(species, V = 5, seed = 1) {           # V folds, stratified by species
+  set.seed(seed); f <- integer(length(species))
+  for (s in unique(species)) { id <- which(species == s); f[id] <- sample(rep(seq_len(V), length.out = length(id))) }
+  f
+}
+convex_weights <- function(Z, y) {                            # non-negative weights summing to 1 that minimize CV squared error
+  obj <- function(b) { w <- exp(c(0, b)); w <- w / sum(w); mean((y - Z %*% w)^2) }
+  b <- optim(rep(0, ncol(Z) - 1), obj, method = "BFGS")$par
+  w <- exp(c(0, b)); setNames(w / sum(w), colnames(Z))
+}
+</script></div></details>
+
+<table class="map"><tr><th>格</th><th>投影片</th><th>要帶走的一句話</th></tr><tr><td>01–03</td><td>5–15 三步驟、gradient descent</td><td>找函式＝在函式集合裡挑 loss 最小的那一個</td></tr><tr><td>04–05</td><td>16–23 多項式、bias／variance</td><td>集合變大，訓練誤差只會變小；測試誤差不一定</td></tr><tr><td>06–08</td><td>25–31 重新設計、regularization</td><td>彈性要放對地方，再用懲罰踩煞車</td></tr><tr><td>09</td><td>50–53 cross-validation、SuperLearner</td><td>不知道誰好，就交給沒看過的資料打分數</td></tr></table>
+<div class="note note"><p>資料：75 筆 Pokémon GO 紀錄，建出 10 筆訓練、10 筆測試、60 筆訓練資料， Average Error 使用 <code>√SSE / N</code>。</p></div>
+<h2><span class="n">01</span>看看資料<span class="slide">投影片 6、8–9、26</span></h2>
+<p>輸入 x 是進化前的 CP（還有物種、HP、身高、體重），輸出 y 是進化後的 CP。先畫出來：你會發現 CP 跟 y 幾乎是一條往右上的線，其他特徵看起來就沒那麼有用。</p>
+<div class="cell"><script type="text/r">
+tr10 <- read_pokemon("data/classroom_train10.csv")
+te10 <- read_pokemon("data/classroom_test10.csv")
+tr60 <- read_pokemon("data/classroom_train60.csv")
+tr10[, c("name", "species", "cp", "hp", "height", "weight", "cp_new")]
+par(mfrow = c(1, 4), mar = c(4.5, 4.5, 1, 0.5), las = 1, bty = "n")
+for (v in c("cp", "hp", "height", "weight"))
+  plot(tr60[[v]], tr60$cp_new, pch = 19, col = adjustcolor("#0B7285", .7), xlab = v, ylab = "CP after evolution")
+</script></div>
+<div class="look"><b>看什麼：</b><p>左邊第一張（cp）幾乎是直線；hp 也有點趨勢（因為 hp 跟 cp 相關）；身高、體重幾乎看不出關係。這張圖等一下在「再加更多特徵」那格會派上用場。</p></div>
+<h2><span class="n">02</span>三步驟：y = b + w·x<sub>cp</sub><span class="slide">投影片 5–12、14–15</span></h2>
+<p>第一步，寫一個帶未知參數的函式（model）。第二步，定 loss：<code>L(b, w) = Σ (yₙ − (b + w·xₙ))²</code>。第三步，找讓 L 最小的 b、w。線性模型有公式解，<code>lm()</code> 一行就結束了。</p>
+<div class="cell"><script type="text/r">
+fit1 <- lm(cp_new ~ cp, data = tr10)
+round(coef(fit1), 3)                                       # b = -188.4, w = 2.67
+c(train = lee_err(tr10$cp_new, fitted(fit1)),
+  test  = lee_err(te10$cp_new, predict(fit1, te10)))       # 31.9, 35.0
+par(mar = c(4.5, 4.5, 1, 1), las = 1, bty = "n")
+plot(tr10$cp, tr10$cp_new, pch = 19, col = "#D9480F", xlim = c(0, 650), ylim = c(0, 1700),
+     xlab = "Original CP", ylab = "CP after evolution")
+points(te10$cp, te10$cp_new, pch = 21, col = "#0B7285", lwd = 2, cex = 1.3)
+abline(fit1, lwd = 3)
+segments(te10$cp, te10$cp_new, te10$cp, predict(fit1, te10), col = "#0B7285", lty = 3)
+legend("topleft", c("training (10)", "testing (10)", "test error"), pch = c(19, 21, NA), lty = c(NA, NA, 3),
+       col = c("#D9480F", "#0B7285", "#0B7285"), bty = "n")
+</script></div>
+<div class="look"><b>看什麼：</b><p>虛線是每隻測試寶可夢「猜錯多少」。右上角那隻伊布錯最多——一條直線同時要照顧波波和伊布，兩邊都顧不好。</p></div>
+<h2><span class="n">03</span>Gradient descent 在 loss 曲面上走路<span class="slide">投影片 13</span></h2>
+<p>沒有公式解的時候怎麼辦？從一個隨便的 (b, w) 出發，每一步往 loss 下降最快的方向走一小步。下面把整個 loss 曲面畫成等高線，再把 Adagrad 走過的路線疊上去。</p>
+<div class="cell"><script type="text/r">
+x <- tr10$cp; y <- tr10$cp_new
+L <- function(b, w) sum((y - b - w * x)^2)
+bs <- seq(-200, -100, length.out = 120); ws <- seq(-5, 5, length.out = 120)
+Z <- outer(bs, ws, Vectorize(L))
+b <- -120; w <- -4; lr <- 1; gb2 <- 0; gw2 <- 0; path <- c(b, w)
+for (it in 1:100000) {                    # Adagrad: b and w live on very different scales, so each gets its own step size
+  r <- y - (b + w * x); gb <- -2 * sum(r); gw <- -2 * sum(r * x)
+  gb2 <- gb2 + gb^2; gw2 <- gw2 + gw^2
+  b <- b - lr / sqrt(gb2) * gb; w <- w - lr / sqrt(gw2) * gw
+  if (it %% 200 == 0) path <- rbind(path, c(b, w))
+}
+c(b = b, w = w)                           # almost the same as lm() (more steps get closer)
+par(mar = c(4.5, 4.5, 1, 1), las = 1)
+image(bs, ws, log10(Z), col = hcl.colors(40, "RdYlBu", rev = TRUE), xlab = "b", ylab = "w")
+contour(bs, ws, log10(Z), add = TRUE, drawlabels = FALSE, col = "white", nlevels = 15)
+lines(path, col = "#1C1B19", lwd = 2); points(path[1, 1], path[1, 2], pch = 19)
+points(coef(fit1)[1], coef(fit1)[2], pch = 4, cex = 2.5, lwd = 3, col = "#FF3E96")
+</script></div>
+<div class="look"><b>看什麼：</b><p>loss 曲面是一條又長又窄的山谷——w 動一點點 loss 就變很多，b 動很多 loss 才變一點。所以要用 Adagrad 這類「每個參數自己調步伐」的方法，不然會在山谷兩邊來回彈。粉紅色 × 是 <code>lm()</code> 的答案，黑線最後停在那裡。</p></div>
+<h2><span class="n">04</span>模型更複雜一點：多項式<span class="slide">投影片 16–19</span></h2>
+<p>把 x²、x³… 加進來，函式集合變大了。訓練誤差一定越來越小——因為大集合包含小集合。測試誤差呢？</p>
+<div class="cell"><script type="text/r">
+tab <- t(sapply(1:5, function(p) {
+  f <- lm(cp_new ~ poly(cp, p, raw = TRUE), data = tr10)
+  c(degree = p, train = lee_err(tr10$cp_new, fitted(f)), test = lee_err(te10$cp_new, predict(f, te10)))
+}))
+round(tab, 1)
+par(mfrow = c(1, 2), mar = c(4.5, 4.5, 1, 1), las = 1, bty = "n")
+plot(tab[, 1], tab[, 3], type = "b", pch = 19, col = "#D9480F", lwd = 2, log = "y", ylim = c(10, 250),
+     xlab = "polynomial degree", ylab = "sqrt(SSE) / N (log scale)")
+lines(tab[, 1], tab[, 2], type = "b", pch = 19, col = "#0B7285", lwd = 2)
+legend("topleft", c("testing", "training"), col = c("#D9480F", "#0B7285"), lwd = 2, pch = 19, bty = "n")
+xs <- data.frame(cp = seq(10, 640, length.out = 300))
+plot(tr10$cp, tr10$cp_new, pch = 19, ylim = c(-300, 1900), xlab = "Original CP", ylab = "CP after evolution")
+for (p in c(1, 3, 5)) lines(xs$cp, predict(lm(cp_new ~ poly(cp, p, raw = TRUE), data = tr10), xs), lwd = 3,
+                           col = c("#1C1B19", NA, "#C98A0C", NA, "#D9480F")[p])
+points(te10$cp, te10$cp_new, pch = 21, col = "#0B7285", lwd = 2, cex = 1.3)
+</script></div>
+<div class="look"><b>看什麼：</b><p>藍線（訓練）一路往下，紅線（測試）在 3 次之後往上衝，5 次是 232.1。右圖的紅色 5 次曲線在沒有資料的地方亂飛——它「剛好穿過」訓練點，但那是把雜訊也學進去了。這就是 overfitting。</p></div>
+<h2><span class="n">05</span>Bias 與 variance：一百個平行宇宙<span class="slide">投影片 20–23</span></h2>
+<p>假設有一百個平行宇宙，每個宇宙的訓練師都抓到不同的 10 隻寶可夢（從 60 隻裡抽）。每個宇宙都 fit 一次 1、3、5 次式，把一百條線畫在一起。</p>
+<div class="cell"><script type="text/r">
+set.seed(1)
+xs <- data.frame(cp = seq(20, 500, length.out = 200))
+degs <- c(1, 3, 5)
+fits <- lapply(degs, function(p) sapply(1:100, function(u) {
+  s <- tr60[sample(nrow(tr60), 10), ]
+  suppressWarnings(predict(lm(cp_new ~ poly(cp, p, raw = TRUE), data = s), xs))
+}))
+par(mfrow = c(1, 3), mar = c(5.2, 5.5, 2, 1), mgp = c(3.8, .8, 0), las = 1, bty = "n")
+for (j in seq_along(degs)) {
+  matplot(xs$cp, fits[[j]], type = "l", lty = 1, col = adjustcolor("#0B7285", .15), ylim = c(-200, 1800),
+          xlab = "Original CP", ylab = "predicted CP after evolution", main = paste("degree", degs[j]))
+  points(tr60$cp, tr60$cp_new, pch = 19, cex = .5)
+}
+at300 <- which.min(abs(xs$cp - 300))
+sapply(setNames(fits, paste0("degree_", degs)), function(f) c(sd_at_cp300 = sd(f[at300, ]), median_at_cp300 = median(f[at300, ])))
+</script></div>
+<div class="look"><b>看什麼：</b><p>黑點是 60 隻寶可夢。1 次式：一百條線擠在一起（variance 小），但都是直的，彎不過去右上那幾隻伊布（bias 大）。3 次式：比較能彎，線也開始散。5 次式：每個宇宙長得完全不一樣，很多線衝出圖外。在 CP = 300 這個位置，一百個宇宙預測的標準差：1 次式約 60、3 次式約 100、5 次式約 470。<b>函式集合越大，bias 有機會變小，但 variance 一定變大。</b></p></div>
+<details class="think"><summary>想一想：真實世界只有一個宇宙，我們怎麼知道自己是不是在 variance 很大的那一邊？</summary><p>看不到其他宇宙，就用自己的資料「模擬」平行宇宙：把資料切成好幾份，輪流拿一份當沒看過的資料打分數——這就是第 09 格的 cross-validation。</p></details>
+<h2><span class="n">06</span>回到第一步：重新設計模型<span class="slide">投影片 25–27</span></h2>
+<p>回頭看資料，不同物種好像走不同的直線。那就讓模型知道物種：每個物種自己一條線（4 個截距 + 4 個斜率）。這是投影片 25 的「Human-designed features」。</p>
+<div class="cell"><script type="text/r">
+bs <- qr.coef(qr(X_species(tr60)), tr60$cp_new)
+c(train = lee_err(tr60$cp_new, X_species(tr60) %*% bs), test = lee_err(te10$cp_new, X_species(te10) %*% bs))  # 3.8, 14.3
+cols <- c(Pidgey = "#B5651D", Weedle = "#C9A227", Caterpie = "#4C9A2A", Eevee = "#8E5B9E")
+par(mar = c(4.5, 4.5, 1, 1), las = 1, bty = "n")
+plot(tr60$cp, tr60$cp_new, pch = 19, col = cols[tr60$species], xlab = "Original CP", ylab = "CP after evolution")
+for (s in SPECIES) { xx <- range(tr60$cp[tr60$species == s]); xx <- seq(xx[1], xx[2], length.out = 50)
+  nd <- data.frame(species = factor(s, levels = SPECIES), cp = xx); lines(xx, X_species(nd) %*% bs, col = cols[s], lwd = 3) }
+legend("topleft", SPECIES, col = cols, pch = 19, bty = "n")
+</script></div>
+<div class="look"><b>看什麼：</b><p>測試誤差從一條直線的 35.0 掉到 14.3。彈性不是盲目加次方，而是讓函式集合<b>包含真正的形狀</b>。</p></div>
+<h2><span class="n">07</span>再加更多特徵：18 個參數<span class="slide">投影片 28</span></h2>
+<p>那把 hp、身高、體重、還有平方項全部加進去呢？每物種 (1, cp, cp²) 共 12 個，加上 hp、hp²、身高、身高²、體重、體重² 共 18 個參數。</p>
+<div class="cell"><script type="text/r">
+b18 <- ridge_fit(X_extended(tr60), tr60$cp_new, lambda = 0)        # lambda = 0 is ordinary least squares
+c(train = lee_err(tr60$cp_new, X_extended(tr60) %*% b18), test = lee_err(te10$cp_new, X_extended(te10) %*% b18))  # 1.9, 102.3
+</script></div>
+<div class="look"><b>看什麼：</b><p>訓練誤差 1.9，比每物種一條線還好；測試誤差 102.3，爆掉了。60 隻寶可夢、18 個參數，模型開始背答案。你在第 01 格看到身高、體重跟 y 沒什麼關係——模型還是硬要用它們去解釋雜訊。</p></div>
+<h2><span class="n">08</span>回到第二步：regularization<span class="slide">投影片 29–31</span></h2>
+<p>不想丟掉特徵，又不想 overfit，怎麼辦？在 loss 後面加一項懲罰：<code>L = Σ(yₙ − ŷₙ)² + λ Σ wᵢ²</code>。w 越小，函式越平滑，對輸入的小變化越不敏感。4 個物種截距不懲罰（只是把線上下移動，跟平滑無關）。</p>
+<div class="cell"><script type="text/r">
+lams <- c(0, 1, 1e2, 1e4, 1e6, 1e8, 1e10)
+rt <- t(sapply(lams, function(l) { b <- ridge_fit(X_extended(tr60), tr60$cp_new, l)
+  c(lambda = l, train = lee_err(tr60$cp_new, X_extended(tr60) %*% b), test = lee_err(te10$cp_new, X_extended(te10) %*% b)) }))
+print(data.frame(lambda = format(rt[, 1], big.mark = ",", scientific = FALSE), round(rt[, 2:3], 1)), row.names = FALSE)
+par(mar = c(4.5, 4.5, 1, 1), las = 1, bty = "n")
+xl <- c(0.1, lams[-1])
+plot(xl, rt[, 3], log = "x", type = "b", pch = 19, lwd = 2, col = "#D9480F", ylim = c(0, 110),
+     xlab = "lambda (log scale; leftmost point is lambda = 0)", ylab = "sqrt(SSE) / N")
+lines(xl, rt[, 2], type = "b", pch = 19, lwd = 2, col = "#0B7285")
+legend("top", c("testing", "training"), col = c("#D9480F", "#0B7285"), lwd = 2, bty = "n", horiz = TRUE)
+</script></div>
+<div class="look"><b>看什麼：</b><p>λ 從 0 往上加，訓練誤差慢慢變大（犧牲一點訓練表現），測試誤差先大幅下降，在 λ = 10,000 最好（11.1），之後又變差——懲罰太重，模型變成 underfitting。這張表和投影片 31 每一格都對得上。</p></div>
+<details class="think"><summary>想一想：λ = 10,000 是我們「偷看」測試資料才知道最好的。真正做研究時可以這樣選嗎？</summary><p>不行。測試資料一旦拿來選 λ，它就不再是「沒看過的資料」，最後報告的測試誤差會太樂觀。選 λ 這件事要在訓練資料裡面用 cross-validation 做——下一格就是。</p></details>
+<h2><span class="n">09</span>交給 cross-validation：SuperLearner<span class="slide">投影片 50–53</span></h2>
+<p>五個候選模型，事先不知道誰最好。把 60 隻訓練資料切成 5 折（每一折都保留各物種），每個模型都拿到一組 out-of-fold 預測，看誰在「沒看過的資料」上猜得最準。再找一組非負、加總為 1 的權重，讓組合後的 CV 誤差最小——這就是 SuperLearner。最後才拿測試資料打一次分數。</p>
+<div class="cell"><script type="text/r">
+f <- strat_folds(tr60$species, V = 5, seed = 1)
+Z <- sapply(pokemon_candidates, function(m) { z <- numeric(nrow(tr60))
+  for (v in 1:5) z[f == v] <- m(tr60[f != v, ], tr60[f == v, ]); z })
+w <- convex_weights(Z, tr60$cp_new)
+P <- sapply(pokemon_candidates, function(m) m(tr60, te10))
+res <- data.frame(CV_RMSE = apply(Z, 2, function(z) sqrt(mean((tr60$cp_new - z)^2))),
+                  SL_weight = w, test_error = apply(P, 2, function(p) lee_err(te10$cp_new, p)))
+print(round(res, 3))
+cat("discrete SL picks:", rownames(res)[which.min(res$CV_RMSE)], "\nensemble SL test error:", round(lee_err(te10$cp_new, P %*% w), 2), "\n")
+</script></div>
+<div class="look"><b>看什麼：</b><ul><li>CV 誤差的排名，跟最後測試誤差的排名幾乎一樣——CV 沒偷看測試資料，卻猜對了誰好。</li><li>18 參數無懲罰的 CV 誤差最大（375），它的 overfitting 在 CV 裡就被抓到了。</li><li>這份資料上 SuperLearner 把權重全部給了 ridge：「全押一個」也是合法的結果，這時 discrete SL（挑 CV 最好的）和 ensemble SL 一樣。</li></ul></div>
+<details class="think"><summary>想一想：SuperLearner 保證的是什麼？它保證因果效果估得準嗎？</summary><p>它保證的是<b>預測</b>：在候選組合裡，CV loss 逼近最好的那一個（oracle property）。它不知道你要拿預測去算什麼，所以不保證因果效果沒有偏差——Lab 2 會直接看到「預測最準、ATE 卻不是最準」的例子。</p></details>
+<h2><span class="n">10</span>帶走一句話<span class="slide">投影片 54</span></h2>
+<p class="punch">ML 最後交給你的，是一個很會猜 Y 的函式 f<sub>n</sub>(x)；它的 KPI 是預測 loss。</p>
+<p>如果 x 裡面有一個「我們可以介入的變數」——比如有沒有吃神奇糖果——這個 f<sub>n</sub> 能不能拿來回答「介入之後會怎樣」？Lab 2 見。</p>
+<nav class="pager"><a href="index.html">← 首頁</a><a href="02_plugin.html">2 plug-in →</a></nav>
+</main>
+<script type="module" src="web/runner.js?v=8"></script>
+</body>
+</html>
