@@ -2,7 +2,7 @@
 id: 05_nhefs
 nav: 5 NHEFS
 title: Lab 5　一家人上場：戒菸會讓人胖多少？AIPW、TMLE、DML、CV-TMLE
-lead: Lab 2–4 在模擬資料上看懂了每一塊誤差。這裡換成真實資料，復刻 Karim (2026) Three Routes to One Answer 的 NHEFS 主線：同一組 nuisance，接成 AIPW、TMLE；加上 cross-fitting，就是 DML 和 CV-TMLE。沒有真值，只能靠診斷（overlap、balance、敏感度）判斷答案可不可信。對應投影片 56–57、77、81–84、87、93–95。
+lead: Lab 2–4 在模擬資料上看懂了每一塊誤差。這裡換成真實資料，復刻 Karim (2026) Three Routes to One Answer 的 NHEFS 主線：同一組 nuisance，接成 AIPW、TMLE；加上 cross-fitting，就是 DML 和 CV-TMLE。沒有真值，只能靠診斷（overlap、balance、敏感度）判斷答案可不可信。對應投影片 56–57、75、79–82、85、91–93。
 toolbox: estimators, nhefs, realdata, plot
 files: data/nhefs.csv
 time: 全部約 2 分鐘，最慢的是第 06、10 格
@@ -10,12 +10,12 @@ time: 全部約 2 分鐘，最慢的是第 06、10 格
 | 格 | Karim (2026) 的步驟 | 投影片 |
 |---|---|---|
 | 01–02 | Step 0：固定題目；看兩組差在哪 | 56–59 |
-| 03–04 | Step 1：先診斷 overlap 與 balance，再選 estimator | 67、77、93 |
-| 05–07 | Step 2–4：共用 nuisance，full sample vs cross-fit | 79–84、94–95 |
-| 08–10 | Step 6：敏感度（截斷、learner、切分） | 87、93 |
+| 03–04 | Step 1：先診斷 overlap 與 balance，再選 estimator | 66、75、91 |
+| 05–07 | Step 2–4：共用 nuisance，full sample vs cross-fit | 77–82、92–93 |
+| 08–10 | Step 6：敏感度（截斷、learner、切分） | 85、91 |
 
 ::: note
-**一家人怎麼分？**兩個問題就分完了：(1) 怎麼把 EIF 變成一個數字——加回去（AIPW 家族）或推 Q̂（TMLE 家族）；(2) nuisance 怎麼訓練——full sample、cross-fit、double cross-fit。AIPW + cross-fit = DML，TMLE + cross-fit = CV-TMLE（投影片 94 那張 2×3 表）。
+**一家人怎麼分？**兩個問題就分完了：(1) 怎麼把 EIF 變成一個數字——加回去（AIPW 家族）或推 Q̂（TMLE 家族）；(2) nuisance 怎麼訓練——full sample、cross-fit、double cross-fit。AIPW + cross-fit = DML，TMLE + cross-fit = CV-TMLE（投影片 92 那張 2×3 表）。
 
 與原論文的差異：原文的 SuperLearner 用 5 個 learner（mean、GLM、glmnet、ranger、earth）；這裡用 base R 寫的 **sl_lite**：mean、主效應 GLM、Hernán–Robins GLM（加平方項）、樣條 GLM 的凸組合，權重由內層 5 折 CV 決定。數字不會和論文逐位相同，但應落在同一範圍（論文 3.32–3.42 kg）。
 :::
@@ -42,7 +42,7 @@ round(grp[order(-abs(grp$SMD)), ], 2)
 戒菸的人平均年紀比較大（SMD 0.28）、每天抽的菸比較少、白人比例比較高。年紀和體重變化本身有關——不調整就比，2.5 kg 這個數字混進了「年紀」的效果。
 :::
 
-## 03 先診斷 overlap，再選 estimator | 投影片 67、77、93
+## 03 先診斷 overlap，再選 estimator | 投影片 66、75、91
 ```r
 set.seed(1)
 nf <- nhefs_nuisance(dat, dat, "hr")        # start with the Hernan-Robins GLM: fastest
@@ -74,7 +74,7 @@ legend("bottomright", c("before weighting", "after IPW"), pch = 19, col = c(COL$
 紅點有 8 個超過 0.1（年紀最大，0.28），加權後藍點全部縮到 0.04 以下。balance 是 ĝ「有沒有把兩組變像」的檢查——它只看得到量到的變數，看不到沒量到的混雜（exchangeability 還是假設）。
 :::
 
-## 05 Full sample：同一組 nuisance，四種接法 | 投影片 81、83–84
+## 05 Full sample：同一組 nuisance，四種接法 | 投影片 79、81–82
 ```r
 p_full <- nhefs_panel(dat, nf, "full sample")
 p_full[, -2]
@@ -86,7 +86,7 @@ c(plugin = plug, AIPW_correction = est_aipw(dat, nf)[["est"]] - plug, TMLE_epsil
 AIPW 和 TMLE 幾乎一樣（差在小數點第三位）：AIPW 直接把修正項加上去，TMLE 先把 Q̂ 往 H 的方向推 ε 再 plug in。Q̂ 本來就不差（Hernán–Robins 的模型），所以修正項和 ε 都很小——和 Lab 3 的糖果是同一個故事。
 :::
 
-## 06 換成 sl_lite，並做 cross-fitting（= DML / CV-TMLE） | 投影片 94–95
+## 06 換成 sl_lite，並做 cross-fitting（= DML / CV-TMLE） | 投影片 92–93
 每個人的 Q̂、ĝ 都由沒看過他的四折資料訓練；SuperLearner 的內層 CV 也放在外層的訓練折裡面。瀏覽器裡約 1 分鐘。
 
 ```r
@@ -113,7 +113,7 @@ forest_plot(lab, c(ours$est, karim$est), c(ours$lo, karim$lo), c(ours$hi, karim$
 ```
 
 ::: look
-藍色是我們、紅色是論文。所有雙重穩健的估計都在 3.3–3.5 kg 之間；它們之間的差距（約 0.1）遠小於 CI 的半寬（約 0.9）。**選哪條路，沒有選對題目和食材重要。**投影片 84 說 AIPW 和 TMLE 的差別在有限樣本——在 overlap 好、Q̂ 不差的資料上，差別小到看不出來。
+藍色是我們、紅色是論文。所有雙重穩健的估計都在 3.3–3.5 kg 之間；它們之間的差距（約 0.1）遠小於 CI 的半寬（約 0.9）。**選哪條路，沒有選對題目和食材重要。**投影片 82 說 AIPW 和 TMLE 的差別在有限樣本——在 overlap 好、Q̂ 不差的資料上，差別小到看不出來。
 :::
 
 ## 08 敏感度一：propensity 截斷門檻
@@ -141,7 +141,7 @@ round(lr, 3)
 「mean」那列 Q̂ 和 ĝ 都只有截距（兩個模型都錯），AIPW 就退回未調整的 2.5 kg——和 Lab 4 第 03 格右下角那格一樣：雙重穩健不是兩個都錯也能救。主效應、Hernán–Robins、樣條三個都在 3.38–3.43：只要模型夠用，答案就穩。
 :::
 
-## 10 敏感度三：換一個隨機切法，答案晃多少？ | 投影片 87、93
+## 10 敏感度三：換一個隨機切法，答案晃多少？ | 投影片 85、91
 同一份資料、不同的 fold。Karim 用 100 次取中位數；這裡先跑 10 次（可以自己改大）。
 
 ```r

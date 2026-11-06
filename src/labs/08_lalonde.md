@@ -11,8 +11,8 @@ time: 第一次要裝 randomForest；全部約 1 分鐘
 | 格 | 在看什麼 | 投影片 |
 |---|---|---|
 | 01 | 隨機分派：直接相減就有答案 | 56–58 |
-| 02–04 | 換成 PSID 對照：兩組差到不能比，propensity 幾乎分開 | 67、77、93 |
-| 05–06 | 八個估計值各說各話；權重集中在少數人身上 | 67–68、84 |
+| 02–04 | 換成 PSID 對照：兩組差到不能比，propensity 幾乎分開 | 66、75、91 |
+| 05–06 | 八個估計值各說各話；權重集中在少數人身上 | 66–67、82 |
 | 07 | trimming：答案變了，因為題目變了 | 56、58 |
 
 ::: note
@@ -42,7 +42,7 @@ c(trainees = sum(d$A), PSID_controls = sum(1 - d$A), naive_difference = mean(d$Y
 受訓者的 1974、1975 年收入只有 PSID 的零頭，年輕、沒結婚、沒學位的比例高很多——SMD 動輒超過 1。直接相減變成 −15,205 美元：不是訓練害的，是兩群人根本不是同一種人。
 :::
 
-## 03 overlap：橋在哪裡？ | 投影片 93
+## 03 overlap：橋在哪裡？ | 投影片 91
 ```r
 nu <- nuisance(d, "glm", "crossfit", seed = 1)
 round(overlap_summary(nu$g_raw, d$A), 3)
@@ -62,7 +62,7 @@ overlap_plot(nu$g_raw, d$A, labels = c("NSW trainees (185)", "PSID controls (2,4
 
 有效樣本數（ESS）掉到 36：權重加總之後，185 個受訓者只相當於 36 個人的資訊量——少數幾個人扛著整個答案。
 
-## 05 八個估計值，各說各話 | 投影片 84
+## 05 八個估計值，各說各話 | 投影片 82
 ```r
 allp <- do.call(rbind, lapply(c("glm", "rf"), function(lr) do.call(rbind, lapply(c("full", "crossfit"), function(sc)
   panel(d, nuisance(d, lr, sc, seed = 1, ntree = 100), paste(lr, sc))))))
@@ -81,7 +81,7 @@ forest_plot(paste(allp$scheme, allp$estimator), allp$est, allp$lo, allp$hi, ref 
 不是。1,794 是 **NSW 受訓者族群**的效果（接近 ATT）。這裡估的是「受訓者 + PSID」合併族群的 ATE，那是另一個 estimand，大部分人是根本不會去參加職訓的一般人。1,794 只能當方向和量級的參考，不能拿來算 coverage（Karim 2026 也這樣提醒）。
 :::
 
-## 06 權重集中在誰身上？ | 投影片 67–68
+## 06 權重集中在誰身上？ | 投影片 66–67
 ```r
 w <- ifelse(d$A == 1, 1 / nu$g, 1 / (1 - nu$g))
 wt <- w[d$A == 1]
@@ -102,7 +102,7 @@ legend("bottomright", c("actual", "if every trainee counted equally"), lty = c(1
 ::: look
 - 左圖：大部分受訓者的權重在 1–1.5 之間——他們的 ĝ 接近 0.9，一看就「不像 PSID 的人」。但最右邊有 6 個人 ĝ 掉到 0.025 以下，權重被截在上限 40——他們長得太像 PSID 的一般人，模型幾乎不相信他們會受訓。
 - 右圖：**前 10 個人（185 人裡的 5%）扛了將近一半（約 49%）的總權重**，有效樣本數只剩 36。
-- 這 10 個人 1978 年的收入多 1,000 或少 1,000，答案就跟著跑。AIPW 的修正項是「權重 × 殘差」，所以同樣受影響（Moccia et al. 2024：AIPW has the same weaknesses of IPW when it comes to positivity；投影片 77 的 V_eff 也說明了為什麼）。
+- 這 10 個人 1978 年的收入多 1,000 或少 1,000，答案就跟著跑。AIPW 的修正項是「權重 × 殘差」，所以同樣受影響（Moccia et al. 2024：AIPW has the same weaknesses of IPW when it comes to positivity；投影片 75 的 V_eff 也說明了為什麼）。
 :::
 
 ## 07 Trimming：答案變了，因為題目變了 | 投影片 56、58

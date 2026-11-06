@@ -242,7 +242,7 @@ forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", co
 }
 </script></div></details>
 
-<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01–02</td><td>一份資料：真值、直接相減、overlap</td><td>56–59、93</td></tr><tr><td>03</td><td>同一份資料，四種組合 vs 真值</td><td>81、83–84</td></tr><tr><td>04–05</td><td>10 份資料：bias、RMSE、coverage</td><td>87、92</td></tr></table>
+<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01–02</td><td>一份資料：真值、直接相減、overlap</td><td>56–59、91</td></tr><tr><td>03</td><td>同一份資料，四種組合 vs 真值</td><td>79、81–82</td></tr><tr><td>04–05</td><td>10 份資料：bias、RMSE、coverage</td><td>85、90</td></tr></table>
 <div class="note note"><p>資料：Hill (2011) 建構的 IHDP 半合成 benchmark，使用 CEVAE 公開的 10 份（ihdp_npci_1–10；每份 747 人、25 個共變數）。Karim (2026) 用 50 份，所以這裡的覆蓋率蒙地卡羅誤差比較大（約 ±7%），看方向，不要看小數點。真值定義為這份資料的 E[μ₁(X) − μ₀(X)]。</p></div>
 <h2><span class="n">01</span>一份資料：真值與直接相減</h2>
 <div class="cell"><script type="text/r">
@@ -250,14 +250,14 @@ d <- load_ihdp(1)
 c(n = length(d$A), treated = sum(d$A), truth = d$truth, naive_difference = mean(d$Y[d$A == 1]) - mean(d$Y[d$A == 0]))
 </script></div>
 <div class="look"><b>看什麼：</b><p>真值約 4.0，直接相減約 4.0——這份剛好偏得不多。但「剛好」不能靠：其他份差多少，第 04 格會看到。這份資料檔裡同時存了 μ₀(X)、μ₁(X)（兩個世界的期望值），真實研究永遠不會有這兩欄。</p></div>
-<h2><span class="n">02</span>overlap<span class="slide">投影片 93</span></h2>
+<h2><span class="n">02</span>overlap<span class="slide">投影片 91</span></h2>
 <div class="cell"><script type="text/r">
 nu <- nuisance(d, "glm", "full")
 round(overlap_summary(nu$g_raw, d$A), 3)
 overlap_plot(nu$g_raw, d$A, labels = c("treated", "control"))
 </script></div>
 <div class="look"><b>看什麼：</b><p>介入組只有 139 人，ĝ 最大只有 0.60；約 4% 的人 ĝ 小於 0.025 被截斷，最大權重約 30，介入組的有效樣本數剩 83（原本 139）。overlap 比 NHEFS 差、比 LaLonde 好很多——樣本又小，等一下 CI 的寬度會反映這件事。</p></div>
-<h2><span class="n">03</span>同一份資料，四種組合 vs 真值<span class="slide">投影片 81、83–84</span></h2>
+<h2><span class="n">03</span>同一份資料，四種組合 vs 真值<span class="slide">投影片 79、81–82</span></h2>
 <div class="cell"><script type="text/r">
 res1 <- do.call(rbind, lapply(c("glm", "rf"), function(lr) do.call(rbind, lapply(c("full", "crossfit"), function(sc)
   panel(d, nuisance(d, lr, sc, seed = 1, ntree = 100), paste(lr, sc))))))
@@ -266,7 +266,7 @@ res1$covers <- res1$lo <= d$truth & d$truth <= res1$hi
 res1
 </script></div>
 <div class="look"><b>看什麼：</b><ul><li>這一份資料上偏最多的是 <b>RF 的 g-computation</b>（約 −0.3 到 −0.4）：random forest 把 A 的效果平滑掉了（Lab 6 看過的那個問題）。GLM 的 g-computation 這一份只偏 −0.09——但第 04 格會看到，平均起來它偏得最多。</li><li>RF full sample：AIPW 偏低、TMLE 偏高，CI 卻只有 ±0.1，兩個都沒蓋到真值（covers = FALSE）。又錯、又很有自信。</li><li>RF cross-fit：誤差回到 0.05 以內，CI 寬回到 ±0.27，都蓋到。</li></ul></div>
-<h2><span class="n">04</span>10 份資料：誰對準了？CI 真的有 95% 嗎？<span class="slide">投影片 87、92</span></h2>
+<h2><span class="n">04</span>10 份資料：誰對準了？CI 真的有 95% 嗎？<span class="slide">投影片 85、90</span></h2>
 <p>每一份都跑一次 {GLM, RF} × {full, cross-fit}。瀏覽器約 2 分鐘。把 <code>R</code> 改成 5 可以更快。</p>
 <div class="cell"><script type="text/r">
 R <- 10

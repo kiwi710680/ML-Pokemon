@@ -241,7 +241,7 @@ forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", co
 }
 </script></div></details>
 
-<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01–03</td><td>資料、兩組差在哪、overlap</td><td>56–59、93</td></tr><tr><td>04</td><td>GLM：full sample 和 cross-fit 幾乎一樣</td><td>85–87</td></tr><tr><td>05–06</td><td>random forest：full sample 的殘差被低估 → AIPW、CI 都歪掉；cross-fit 救回來</td><td>63、85–87、93</td></tr><tr><td>07–08</td><td>四種組合畫在一起；TMLE 的範圍優勢</td><td>84</td></tr></table>
+<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01–03</td><td>資料、兩組差在哪、overlap</td><td>56–59、91</td></tr><tr><td>04</td><td>GLM：full sample 和 cross-fit 幾乎一樣</td><td>83–85</td></tr><tr><td>05–06</td><td>random forest：full sample 的殘差被低估 → AIPW、CI 都歪掉；cross-fit 救回來</td><td>63、83–85、91</td></tr><tr><td>07–08</td><td>四種組合畫在一起；TMLE 的範圍優勢</td><td>82</td></tr></table>
 <div class="note note"><p>資料：Connors et al. (1996) SUPPORT 研究的 RHC 資料，取自 Vanderbilt Biostatistics 公開資料庫（hbiostat.org/data）。共變數處理和 Karim (2026) 相同：拿掉治療、結果、日期與 ID，以及缺失太多的 cat2、adld3p、urin1，類別變數展開成 0/1。這是觀察資料，<b>沒有真值</b>。</p></div>
 <h2><span class="n">01</span>資料與問題</h2>
 <div class="cell"><script type="text/r">
@@ -257,14 +257,14 @@ top <- head(sort(abs(s), decreasing = TRUE), 10)
 round(data.frame(SMD = s[names(top)]), 2)
 </script></div>
 <div class="look"><b>看什麼：</b><p>前幾名是 APACHE 分數（aps1）、血壓（meanbp1）、PaO₂/FiO₂（pafi1）、診斷類別——做 RHC 的病人病得比較重。這就是 confounding，也是 Connors 這篇當年引起爭議的原因。</p></div>
-<h2><span class="n">03</span>overlap<span class="slide">投影片 67、93</span></h2>
+<h2><span class="n">03</span>overlap<span class="slide">投影片 66、91</span></h2>
 <div class="cell"><script type="text/r">
 nu_glm_full <- nuisance(d, "glm", "full")
 round(overlap_summary(nu_glm_full$g_raw, d$A), 3)
 overlap_plot(nu_glm_full$g_raw, d$A, labels = c("RHC", "no RHC"))
 </script></div>
 <div class="look"><b>看什麼：</b><p>兩組有明顯位移（做 RHC 的偏右），但大部分範圍都有重疊；被截斷的人不到 2%，治療組的有效樣本數還有約 1,200（原本 2,184）。overlap 夠用，問題不在這裡。</p></div>
-<h2><span class="n">04</span>GLM：full sample 和 cross-fit<span class="slide">投影片 85–87</span></h2>
+<h2><span class="n">04</span>GLM：full sample 和 cross-fit<span class="slide">投影片 83–85</span></h2>
 <p>先用主效應 logistic regression 當 Q 和 g。這種模型「容量」小，就算看過自己的資料，也背不起來。</p>
 <div class="cell"><script type="text/r">
 nu_glm_cf <- nuisance(d, "glm", "crossfit", seed = 1)
@@ -272,7 +272,7 @@ rbind(full = residual_check(d, nu_glm_full), crossfit = residual_check(d, nu_glm
 rbind(panel(d, nu_glm_full, "GLM full"), panel(d, nu_glm_cf, "GLM cross-fit"))
 </script></div>
 <div class="look"><b>看什麼：</b><p>殘差的 RMS，樣本內 0.417、out-of-fold 0.423，幾乎一樣——GLM 沒在背答案。所以 full sample 和 cross-fit 的 AIPW 都約 0.056–0.058，CI 也差不多。</p></div>
-<h2><span class="n">05</span>Random forest，full sample：自己改考卷<span class="slide">投影片 63、93</span></h2>
+<h2><span class="n">05</span>Random forest，full sample：自己改考卷<span class="slide">投影片 63、91</span></h2>
 <p>換成 random forest（100 棵樹）。full sample 的意思是：用 5,735 人訓練，再預測同一批 5,735 人。瀏覽器約 20–40 秒。</p>
 <div class="cell"><script type="text/r">
 nu_rf_full <- nuisance(d, "rf", "full", ntree = 100)
@@ -281,7 +281,7 @@ panel(d, nu_rf_full, "RF full")
 </script></div>
 <div class="look"><b>看什麼：</b><p>殘差 RMS 掉到 0.16——每個病人的預測幾乎就是他自己的結果，因為訓練時看過他。後果：</p>
 <ul><li>AIPW 的修正項 H(Y − Q̂<sub>A</sub>) 平均只剩 0.007，AIPW（約 0.022）被拉回 g-computation（約 0.015）。</li><li>EIF 的 SE 也跟著被低估，CI（約 0.016–0.028）窄得不像話——<b>不是比較準，是假裝比較準。</b></li><li>TMLE 的非線性更新對同一個過擬合的 Q̂ 反應不同，跑到 0.085。兩個「號稱漸近相同」的估計器，在這裡差了四倍。</li></ul></div>
-<h2><span class="n">06</span>Random forest，cross-fit：預測和打分數分開<span class="slide">投影片 85–87</span></h2>
+<h2><span class="n">06</span>Random forest，cross-fit：預測和打分數分開<span class="slide">投影片 83–85</span></h2>
 <p>同樣的 random forest，但每個人的預測都來自沒看過他的另外 4 折。要訓練 10 個森林，瀏覽器約 1–3 分鐘。</p>
 <div class="cell"><script type="text/r">
 nu_rf_cf <- nuisance(d, "rf", "crossfit", seed = 1, ntree = 100)
@@ -301,7 +301,7 @@ forest_plot(c(paste(sub$scheme, sub$estimator), karim$lab), c(sub$est, karim$est
             col = c(ifelse(grepl("full", sub$scheme), COL$red, COL$teal), rep(COL$muted, 4)), ref = 0, xlab = "30-day mortality risk difference")
 </script></div>
 <div class="look"><b>看什麼：</b><p>紅色（full sample）裡，RF 的兩條線又窄又互相打架；藍色（cross-fit）裡，GLM（約 0.058）和 RF（約 0.033–0.040）的 CI 大幅重疊，都是 3–6 個百分點左右的增加。灰色是 Karim 的結果。<b>cross-fitting 不改變 estimand，卻可以改變有限樣本的 estimate 和 CI。</b></p></div>
-<h2><span class="n">08</span>二元結果：TMLE 一定落在合法範圍<span class="slide">投影片 84</span></h2>
+<h2><span class="n">08</span>二元結果：TMLE 一定落在合法範圍<span class="slide">投影片 82</span></h2>
 <div class="cell"><script type="text/r">
 pseudo <- with(nu_rf_cf, Q1 - Q0 + (d$A / g - (1 - d$A) / (1 - g)) * (d$Y - ifelse(d$A == 1, Q1, Q0)))
 c(AIPW_contribution_min = min(pseudo), AIPW_contribution_max = max(pseudo))

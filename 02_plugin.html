@@ -34,7 +34,7 @@
 <main>
 <p class="kicker">Lab 2　神奇糖果（上）</p>
 <h1>把 regression 變成因果效果，然後看它歪掉</h1>
-<p class="lead">訓練師在進化前，會餵一些寶可夢吃「神奇糖果」（A = 1）。糖果到底讓進化後 CP 平均多多少？Lab 1 學會的 regression 怎麼變成這個答案（plug-in）？用了最會預測的 learner，答案為什麼還是歪的？對應投影片 55–68。</p>
+<p class="lead">訓練師在進化前，會餵一些寶可夢吃「神奇糖果」（A = 1）。糖果到底讓進化後 CP 平均多多少？Lab 1 學會的 regression 怎麼變成這個答案（plug-in）？用了最會預測的 learner，答案為什麼還是歪的？對應投影片 55–67。</p>
 <div class="actions"><button id="runall" disabled>▶ 全部執行</button><span class="time">全部約 1–2 分鐘，最慢的是第 05、06 格</span>
 <a class="colab" href="https://colab.research.google.com/github/kiwi710680/Pokemon-CP/blob/main/colab/02_plugin.ipynb" target="_blank" rel="noopener">在 Colab 開啟</a>
 <a class="dl" href="colab/02_plugin.ipynb" download>下載 .ipynb</a></div>
@@ -267,7 +267,7 @@ forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", co
 }
 </script></div></details>
 
-<table class="map"><tr><th>格</th><th>投影片</th><th>這格回答的問題</th></tr><tr><td>01–02</td><td>56–59、62</td><td>誰吃到糖？直接相減錯在哪？</td></tr><tr><td>03–04</td><td>60–62</td><td>因果問題怎麼變成 regression？plug-in 是什麼？Q 該用哪個模型？</td></tr><tr><td>05–06</td><td>63–65</td><td>為什麼預測很準，ATE 還是歪？歪的那一塊有多大？</td></tr><tr><td>07</td><td>67–68</td><td>另一條路 IPTW：只信 g 會怎樣？</td></tr></table>
+<table class="map"><tr><th>格</th><th>投影片</th><th>這格回答的問題</th></tr><tr><td>01–02</td><td>56–59、62</td><td>誰吃到糖？直接相減錯在哪？</td></tr><tr><td>03–04</td><td>60–62</td><td>因果問題怎麼變成 regression？plug-in 是什麼？Q 該用哪個模型？</td></tr><tr><td>05–06</td><td>63–65</td><td>為什麼預測很準，ATE 還是歪？歪的那一塊有多大？</td></tr><tr><td>07</td><td>66–67</td><td>另一條路 IPTW：只信 g 會怎樣？</td></tr></table>
 <div class="note warn"><p><b>虛構情境、模擬資料。</b>因為資料是生成的，可以直接看答案錯了多少、錯在哪裡。</p></div>
 <h2><span class="n">01</span>誰吃到糖？<span class="slide">投影片 58–59</span></h2>
 <p>X = (物種, 進化前 CP)，A = 有沒有吃糖，Y = 進化後 CP。訓練師偏心：CP 高的、伊布，比較容易吃到糖。CP 本身又決定進化後 CP。X 同時影響 A 和 Y——這就是 confounding。</p>
@@ -348,7 +348,7 @@ barplot(rev(dec$plugin), horiz = TRUE, names.arg = rev(c("total error", "samplin
 abline(v = 0)
 </script></div>
 <div class="look"><b>看什麼：</b><ul><li>總誤差約 3.4，最大的一塊是紅色的 first-order bias（約 4.8）——Q̂ 估錯、平均之後跟著偏的那一塊，它的大小跟 ‖Q̂ − Q‖ 同一個量級。</li><li>藍色的抽樣誤差（約 0.2）本來就該有，是 CI 要描述的東西。</li><li>紫色（約 −1.6）是「同一份資料又訓練又評分」留下來的那一塊。</li><li>所以「把預測做準」不夠：ML 學得多慢，first-order bias 就多大。怎麼辦？Lab 3 會把這一塊估出來、扣掉。</li></ul></div>
-<h2><span class="n">07</span>另一條路：IPTW<span class="slide">投影片 67–68</span></h2>
+<h2><span class="n">07</span>另一條路：IPTW<span class="slide">投影片 66–67</span></h2>
 <p>如果不信 Q̂，只信 ĝ 呢？很少吃糖的那類，少數吃了糖的要代表更多同類：權重 1/ĝ。HT 版本直接乘權重除以 n；Hájek（stabilized）版本除以各組權重總和。</p>
 <div class="cell"><script type="text/r">
 c(truth = truth, IPTW_HT = est_ipw_ht(d, nf), IPTW_Hajek = est_ipw(d, nf))

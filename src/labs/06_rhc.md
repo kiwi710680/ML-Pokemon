@@ -2,7 +2,7 @@
 id: 06_rhc
 nav: 6 RHC
 title: Lab 6　RHC：learner 太會背答案的時候（二元結果）
-lead: 加護病房的病人做右心導管（RHC），30 天死亡風險會差多少？5,735 人、66 個共變數、二元結果。Lab 4 在神奇糖果裡用 k = 1 的 kNN 看到「自己改考卷」；這裡在真實資料上用 random forest 再看一次——而且看得更清楚。最後一格看投影片 84 的「結果範圍」：二元結果時，TMLE 為什麼一定落在合法範圍。
+lead: 加護病房的病人做右心導管（RHC），30 天死亡風險會差多少？5,735 人、66 個共變數、二元結果。Lab 4 在神奇糖果裡用 k = 1 的 kNN 看到「自己改考卷」；這裡在真實資料上用 random forest 再看一次——而且看得更清楚。最後一格看投影片 82 的「結果範圍」：二元結果時，TMLE 為什麼一定落在合法範圍。
 toolbox: estimators, realdata, plot
 files: data/rhc.csv
 packages: randomForest
@@ -10,10 +10,10 @@ time: 第一次要裝 randomForest；全部約 2–4 分鐘，最慢的是第 06
 ---
 | 格 | 在看什麼 | 投影片 |
 |---|---|---|
-| 01–03 | 資料、兩組差在哪、overlap | 56–59、93 |
-| 04 | GLM：full sample 和 cross-fit 幾乎一樣 | 85–87 |
-| 05–06 | random forest：full sample 的殘差被低估 → AIPW、CI 都歪掉；cross-fit 救回來 | 63、85–87、93 |
-| 07–08 | 四種組合畫在一起；TMLE 的範圍優勢 | 84 |
+| 01–03 | 資料、兩組差在哪、overlap | 56–59、91 |
+| 04 | GLM：full sample 和 cross-fit 幾乎一樣 | 83–85 |
+| 05–06 | random forest：full sample 的殘差被低估 → AIPW、CI 都歪掉；cross-fit 救回來 | 63、83–85、91 |
+| 07–08 | 四種組合畫在一起；TMLE 的範圍優勢 | 82 |
 
 ::: note
 資料：Connors et al. (1996) SUPPORT 研究的 RHC 資料，取自 Vanderbilt Biostatistics 公開資料庫（hbiostat.org/data）。共變數處理和 Karim (2026) 相同：拿掉治療、結果、日期與 ID，以及缺失太多的 cat2、adld3p、urin1，類別變數展開成 0/1。這是觀察資料，**沒有真值**。
@@ -41,7 +41,7 @@ round(data.frame(SMD = s[names(top)]), 2)
 前幾名是 APACHE 分數（aps1）、血壓（meanbp1）、PaO₂/FiO₂（pafi1）、診斷類別——做 RHC 的病人病得比較重。這就是 confounding，也是 Connors 這篇當年引起爭議的原因。
 :::
 
-## 03 overlap | 投影片 67、93
+## 03 overlap | 投影片 66、91
 ```r
 nu_glm_full <- nuisance(d, "glm", "full")
 round(overlap_summary(nu_glm_full$g_raw, d$A), 3)
@@ -52,7 +52,7 @@ overlap_plot(nu_glm_full$g_raw, d$A, labels = c("RHC", "no RHC"))
 兩組有明顯位移（做 RHC 的偏右），但大部分範圍都有重疊；被截斷的人不到 2%，治療組的有效樣本數還有約 1,200（原本 2,184）。overlap 夠用，問題不在這裡。
 :::
 
-## 04 GLM：full sample 和 cross-fit | 投影片 85–87
+## 04 GLM：full sample 和 cross-fit | 投影片 83–85
 先用主效應 logistic regression 當 Q 和 g。這種模型「容量」小，就算看過自己的資料，也背不起來。
 
 ```r
@@ -65,7 +65,7 @@ rbind(panel(d, nu_glm_full, "GLM full"), panel(d, nu_glm_cf, "GLM cross-fit"))
 殘差的 RMS，樣本內 0.417、out-of-fold 0.423，幾乎一樣——GLM 沒在背答案。所以 full sample 和 cross-fit 的 AIPW 都約 0.056–0.058，CI 也差不多。
 :::
 
-## 05 Random forest，full sample：自己改考卷 | 投影片 63、93
+## 05 Random forest，full sample：自己改考卷 | 投影片 63、91
 換成 random forest（100 棵樹）。full sample 的意思是：用 5,735 人訓練，再預測同一批 5,735 人。瀏覽器約 20–40 秒。
 
 ```r
@@ -82,7 +82,7 @@ panel(d, nu_rf_full, "RF full")
 - TMLE 的非線性更新對同一個過擬合的 Q̂ 反應不同，跑到 0.085。兩個「號稱漸近相同」的估計器，在這裡差了四倍。
 :::
 
-## 06 Random forest，cross-fit：預測和打分數分開 | 投影片 85–87
+## 06 Random forest，cross-fit：預測和打分數分開 | 投影片 83–85
 同樣的 random forest，但每個人的預測都來自沒看過他的另外 4 折。要訓練 10 個森林，瀏覽器約 1–3 分鐘。
 
 ```r
@@ -114,7 +114,7 @@ forest_plot(c(paste(sub$scheme, sub$estimator), karim$lab), c(sub$est, karim$est
 紅色（full sample）裡，RF 的兩條線又窄又互相打架；藍色（cross-fit）裡，GLM（約 0.058）和 RF（約 0.033–0.040）的 CI 大幅重疊，都是 3–6 個百分點左右的增加。灰色是 Karim 的結果。**cross-fitting 不改變 estimand，卻可以改變有限樣本的 estimate 和 CI。**
 :::
 
-## 08 二元結果：TMLE 一定落在合法範圍 | 投影片 84
+## 08 二元結果：TMLE 一定落在合法範圍 | 投影片 82
 ```r
 pseudo <- with(nu_rf_cf, Q1 - Q0 + (d$A / g - (1 - d$A) / (1 - g)) * (d$Y - ifelse(d$A == 1, Q1, Q0)))
 c(AIPW_contribution_min = min(pseudo), AIPW_contribution_max = max(pseudo))

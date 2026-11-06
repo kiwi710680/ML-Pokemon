@@ -1,17 +1,17 @@
 # Pokémon-CP Lab：預測很準，就能回答因果嗎？
 
-搭配簡報《Machine learning in causal inference for epidemiology》（1106 最終版，100 頁，其中 2 頁隱藏）的八個 R Lab。順序跟簡報一樣，每一頁都標了對應的投影片頁碼。
+搭配簡報《Machine learning in causal inference for epidemiology》（final 版，99 頁；第 32–49 頁隱藏）的八個 R Lab。順序跟簡報一樣，每一頁都標了對應的投影片頁碼。
 
 | Lab | 簡報章節 | 內容 |
 |---|---|---|
 | 1 找函式 | 1–54 | 寶可夢 CP：三步驟、gradient descent、overfitting、bias／variance、ridge、CV、SuperLearner |
-| 2 plug-in | 55–68 | 神奇糖果：同一隻預測兩次；**預測最準 ≠ ATE 最準**；plug-in 誤差拆三塊；IPTW |
-| 3 EIF 修正 | 70–84 | 多一個人答案動多少（EIF 積木）；D(O) 平均為 0、變異數 = 效率界；AIPW、TMLE |
-| 4 剩下什麼 | 85–94 | R₂ 拆解、每隻波波的誤差、**double robustness 2×2**、orthogonality、cross-fitting、positivity、重複模擬 |
-| 5 NHEFS | 56–57、77、81–84、87、93–95 | Karim (2026) 主線：診斷、AIPW／TMLE／DML／CV-TMLE、敏感度 |
-| 6 RHC | 63、84–87、93 | random forest 自己改考卷；二元結果時 TMLE 的範圍優勢 |
-| 7 IHDP | 81–84、87、92–93 | 知道真值：bias、RMSE、coverage |
-| 8 LaLonde | 56、58、67–68、77、84、93 | overlap 不存在、權重集中、trimming 改變 estimand |
+| 2 plug-in | 55–67 | 神奇糖果：同一隻預測兩次；**預測最準 ≠ ATE 最準**；plug-in 誤差拆三塊；IPTW |
+| 3 EIF 修正 | 68–82 | 多一個人答案動多少（EIF 積木）；D(O) 平均為 0、變異數 = 效率界；AIPW、TMLE |
+| 4 剩下什麼 | 83–92 | R₂ 拆解、每隻波波的誤差、**double robustness 2×2**、orthogonality、cross-fitting、positivity、重複模擬 |
+| 5 NHEFS | 56–57、75、79–82、85、91–93 | Karim (2026) 主線：診斷、AIPW／TMLE／DML／CV-TMLE、敏感度 |
+| 6 RHC | 63、82–85、91 | random forest 自己改考卷；二元結果時 TMLE 的範圍優勢 |
+| 7 IHDP | 79–82、85、90–91 | 知道真值：bias、RMSE、coverage |
+| 8 LaLonde | 56、58、66–67、75、82、91 | overlap 不存在、權重集中、trimming 改變 estimand |
 
 ## 兩種開法
 

@@ -10,9 +10,9 @@ time: 第一次要裝 randomForest；全部約 2–3 分鐘，最慢的是第 04
 ---
 | 格 | 在看什麼 | 投影片 |
 |---|---|---|
-| 01–02 | 一份資料：真值、直接相減、overlap | 56–59、93 |
-| 03 | 同一份資料，四種組合 vs 真值 | 81、83–84 |
-| 04–05 | 10 份資料：bias、RMSE、coverage | 87、92 |
+| 01–02 | 一份資料：真值、直接相減、overlap | 56–59、91 |
+| 03 | 同一份資料，四種組合 vs 真值 | 79、81–82 |
+| 04–05 | 10 份資料：bias、RMSE、coverage | 85、90 |
 
 ::: note
 資料：Hill (2011) 建構的 IHDP 半合成 benchmark，使用 CEVAE 公開的 10 份（ihdp_npci_1–10；每份 747 人、25 個共變數）。Karim (2026) 用 50 份，所以這裡的覆蓋率蒙地卡羅誤差比較大（約 ±7%），看方向，不要看小數點。真值定義為這份資料的 E[μ₁(X) − μ₀(X)]。
@@ -28,7 +28,7 @@ c(n = length(d$A), treated = sum(d$A), truth = d$truth, naive_difference = mean(
 真值約 4.0，直接相減約 4.0——這份剛好偏得不多。但「剛好」不能靠：其他份差多少，第 04 格會看到。這份資料檔裡同時存了 μ₀(X)、μ₁(X)（兩個世界的期望值），真實研究永遠不會有這兩欄。
 :::
 
-## 02 overlap | 投影片 93
+## 02 overlap | 投影片 91
 ```r
 nu <- nuisance(d, "glm", "full")
 round(overlap_summary(nu$g_raw, d$A), 3)
@@ -39,7 +39,7 @@ overlap_plot(nu$g_raw, d$A, labels = c("treated", "control"))
 介入組只有 139 人，ĝ 最大只有 0.60；約 4% 的人 ĝ 小於 0.025 被截斷，最大權重約 30，介入組的有效樣本數剩 83（原本 139）。overlap 比 NHEFS 差、比 LaLonde 好很多——樣本又小，等一下 CI 的寬度會反映這件事。
 :::
 
-## 03 同一份資料，四種組合 vs 真值 | 投影片 81、83–84
+## 03 同一份資料，四種組合 vs 真值 | 投影片 79、81–82
 ```r
 res1 <- do.call(rbind, lapply(c("glm", "rf"), function(lr) do.call(rbind, lapply(c("full", "crossfit"), function(sc)
   panel(d, nuisance(d, lr, sc, seed = 1, ntree = 100), paste(lr, sc))))))
@@ -54,7 +54,7 @@ res1
 - RF cross-fit：誤差回到 0.05 以內，CI 寬回到 ±0.27，都蓋到。
 :::
 
-## 04 10 份資料：誰對準了？CI 真的有 95% 嗎？ | 投影片 87、92
+## 04 10 份資料：誰對準了？CI 真的有 95% 嗎？ | 投影片 85、90
 每一份都跑一次 {GLM, RF} × {full, cross-fit}。瀏覽器約 2 分鐘。把 `R` 改成 5 可以更快。
 
 ```r

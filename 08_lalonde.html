@@ -242,7 +242,7 @@ forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", co
 }
 </script></div></details>
 
-<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01</td><td>隨機分派：直接相減就有答案</td><td>56–58</td></tr><tr><td>02–04</td><td>換成 PSID 對照：兩組差到不能比，propensity 幾乎分開</td><td>67、77、93</td></tr><tr><td>05–06</td><td>八個估計值各說各話；權重集中在少數人身上</td><td>67–68、84</td></tr><tr><td>07</td><td>trimming：答案變了，因為題目變了</td><td>56、58</td></tr></table>
+<table class="map"><tr><th>格</th><th>在看什麼</th><th>投影片</th></tr><tr><td>01</td><td>隨機分派：直接相減就有答案</td><td>56–58</td></tr><tr><td>02–04</td><td>換成 PSID 對照：兩組差到不能比，propensity 幾乎分開</td><td>66、75、91</td></tr><tr><td>05–06</td><td>八個估計值各說各話；權重集中在少數人身上</td><td>66–67、82</td></tr><tr><td>07</td><td>trimming：答案變了，因為題目變了</td><td>56、58</td></tr></table>
 <div class="note note"><p>資料：LaLonde (1986) 的 NSW 職訓實驗，使用 Dehejia &amp; Wahba 整理的版本（users.nber.org/~rdehejia/data）：NSW 受訓者 185 人、NSW 隨機對照 260 人、PSID 對照 2,490 人。結果是 1978 年收入（美元），共變數：年齡、教育、黑人、西語裔、已婚、無學位、1974 與 1975 年收入。</p></div>
 <h2><span class="n">01</span>隨機分派：基準答案</h2>
 <div class="cell"><script type="text/r">
@@ -259,7 +259,7 @@ round(grp, 2)
 c(trainees = sum(d$A), PSID_controls = sum(1 - d$A), naive_difference = mean(d$Y[d$A == 1]) - mean(d$Y[d$A == 0]))
 </script></div>
 <div class="look"><b>看什麼：</b><p>受訓者的 1974、1975 年收入只有 PSID 的零頭，年輕、沒結婚、沒學位的比例高很多——SMD 動輒超過 1。直接相減變成 −15,205 美元：不是訓練害的，是兩群人根本不是同一種人。</p></div>
-<h2><span class="n">03</span>overlap：橋在哪裡？<span class="slide">投影片 93</span></h2>
+<h2><span class="n">03</span>overlap：橋在哪裡？<span class="slide">投影片 91</span></h2>
 <div class="cell"><script type="text/r">
 nu <- nuisance(d, "glm", "crossfit", seed = 1)
 round(overlap_summary(nu$g_raw, d$A), 3)
@@ -269,7 +269,7 @@ overlap_plot(nu$g_raw, d$A, labels = c("NSW trainees (185)", "PSID controls (2,4
 <h2><span class="n">04</span>和 NHEFS 對照一下</h2>
 <table><tr><th></th><th>NHEFS（Lab 5）</th><th>LaLonde × PSID</th></tr><tr><td>ĝ 範圍</td><td>0.05–0.78</td><td>≈ 0–0.96</td></tr><tr><td>被截斷的比例</td><td>0%</td><td>約 80%</td></tr><tr><td>治療組有效樣本數 / 人數</td><td>約 326 / 403</td><td>約 36 / 185</td></tr></table>
 <p>有效樣本數（ESS）掉到 36：權重加總之後，185 個受訓者只相當於 36 個人的資訊量——少數幾個人扛著整個答案。</p>
-<h2><span class="n">05</span>八個估計值，各說各話<span class="slide">投影片 84</span></h2>
+<h2><span class="n">05</span>八個估計值，各說各話<span class="slide">投影片 82</span></h2>
 <div class="cell"><script type="text/r">
 allp <- do.call(rbind, lapply(c("glm", "rf"), function(lr) do.call(rbind, lapply(c("full", "crossfit"), function(sc)
   panel(d, nuisance(d, lr, sc, seed = 1, ntree = 100), paste(lr, sc))))))
@@ -281,7 +281,7 @@ forest_plot(paste(allp$scheme, allp$estimator), allp$est, allp$lo, allp$hi, ref 
 </script></div>
 <div class="look"><b>看什麼：</b><p>從 −14,000（IPTW）到 +800，AIPW 和 TMLE 在同一組 nuisance 下還能差 3,700–4,400 美元（GLM cross-fit：AIPW −12、TMLE −4,422）。RF full sample 的 CI 只有 ±300，又是「又錯、又很有自信」。Karim 的 Table 9 一樣：−733 到 −14,629。這時候「方法之間一致」完全不成立——這本身就是一個警訊。Moccia et al. (2024) 說 AIPW 在 near-positivity violation 下不穩，在這裡看得最清楚。</p></div>
 <details class="think"><summary>想一想：那 1,794 是不是這裡的真值？誰離它最近誰就對？</summary><p>不是。1,794 是 <b>NSW 受訓者族群</b>的效果（接近 ATT）。這裡估的是「受訓者 + PSID」合併族群的 ATE，那是另一個 estimand，大部分人是根本不會去參加職訓的一般人。1,794 只能當方向和量級的參考，不能拿來算 coverage（Karim 2026 也這樣提醒）。</p></details>
-<h2><span class="n">06</span>權重集中在誰身上？<span class="slide">投影片 67–68</span></h2>
+<h2><span class="n">06</span>權重集中在誰身上？<span class="slide">投影片 66–67</span></h2>
 <div class="cell"><script type="text/r">
 w <- ifelse(d$A == 1, 1 / nu$g, 1 / (1 - nu$g))
 wt <- w[d$A == 1]
@@ -298,7 +298,7 @@ abline(0, 1 / length(cs), lty = 2, col = COL$muted)
 points(10, cs[10], pch = 19, cex = 1.6); text(10, cs[10], sprintf("  top 10 = %.0f%%", 100 * cs[10]), adj = 0)
 legend("bottomright", c("actual", "if every trainee counted equally"), lty = c(1, 2), lwd = c(3, 1), col = c(COL$red, COL$muted), bty = "n")
 </script></div>
-<div class="look"><b>看什麼：</b><ul><li>左圖：大部分受訓者的權重在 1–1.5 之間——他們的 ĝ 接近 0.9，一看就「不像 PSID 的人」。但最右邊有 6 個人 ĝ 掉到 0.025 以下，權重被截在上限 40——他們長得太像 PSID 的一般人，模型幾乎不相信他們會受訓。</li><li>右圖：<b>前 10 個人（185 人裡的 5%）扛了將近一半（約 49%）的總權重</b>，有效樣本數只剩 36。</li><li>這 10 個人 1978 年的收入多 1,000 或少 1,000，答案就跟著跑。AIPW 的修正項是「權重 × 殘差」，所以同樣受影響（Moccia et al. 2024：AIPW has the same weaknesses of IPW when it comes to positivity；投影片 77 的 V_eff 也說明了為什麼）。</li></ul></div>
+<div class="look"><b>看什麼：</b><ul><li>左圖：大部分受訓者的權重在 1–1.5 之間——他們的 ĝ 接近 0.9，一看就「不像 PSID 的人」。但最右邊有 6 個人 ĝ 掉到 0.025 以下，權重被截在上限 40——他們長得太像 PSID 的一般人，模型幾乎不相信他們會受訓。</li><li>右圖：<b>前 10 個人（185 人裡的 5%）扛了將近一半（約 49%）的總權重</b>，有效樣本數只剩 36。</li><li>這 10 個人 1978 年的收入多 1,000 或少 1,000，答案就跟著跑。AIPW 的修正項是「權重 × 殘差」，所以同樣受影響（Moccia et al. 2024：AIPW has the same weaknesses of IPW when it comes to positivity；投影片 75 的 V_eff 也說明了為什麼）。</li></ul></div>
 <h2><span class="n">07</span>Trimming：答案變了，因為題目變了<span class="slide">投影片 56、58</span></h2>
 <p>只保留 ĝ 在 [ε, 1 − ε] 的人，再做一次 cross-fit AIPW（= DML）。</p>
 <div class="cell"><script type="text/r">

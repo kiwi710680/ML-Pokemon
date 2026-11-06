@@ -295,8 +295,8 @@ forest_plot <- function(lab, est, lo = NA, hi = NA, ref = NULL, ref_lab = "", co
 }
 </script></div></details>
 
-<table class="map"><tr><th>格</th><th>Karim (2026) 的步驟</th><th>投影片</th></tr><tr><td>01–02</td><td>Step 0：固定題目；看兩組差在哪</td><td>56–59</td></tr><tr><td>03–04</td><td>Step 1：先診斷 overlap 與 balance，再選 estimator</td><td>67、77、93</td></tr><tr><td>05–07</td><td>Step 2–4：共用 nuisance，full sample vs cross-fit</td><td>79–84、94–95</td></tr><tr><td>08–10</td><td>Step 6：敏感度（截斷、learner、切分）</td><td>87、93</td></tr></table>
-<div class="note note"><p><b>一家人怎麼分？</b>兩個問題就分完了：(1) 怎麼把 EIF 變成一個數字——加回去（AIPW 家族）或推 Q̂（TMLE 家族）；(2) nuisance 怎麼訓練——full sample、cross-fit、double cross-fit。AIPW + cross-fit = DML，TMLE + cross-fit = CV-TMLE（投影片 94 那張 2×3 表）。</p>
+<table class="map"><tr><th>格</th><th>Karim (2026) 的步驟</th><th>投影片</th></tr><tr><td>01–02</td><td>Step 0：固定題目；看兩組差在哪</td><td>56–59</td></tr><tr><td>03–04</td><td>Step 1：先診斷 overlap 與 balance，再選 estimator</td><td>66、75、91</td></tr><tr><td>05–07</td><td>Step 2–4：共用 nuisance，full sample vs cross-fit</td><td>77–82、92–93</td></tr><tr><td>08–10</td><td>Step 6：敏感度（截斷、learner、切分）</td><td>85、91</td></tr></table>
+<div class="note note"><p><b>一家人怎麼分？</b>兩個問題就分完了：(1) 怎麼把 EIF 變成一個數字——加回去（AIPW 家族）或推 Q̂（TMLE 家族）；(2) nuisance 怎麼訓練——full sample、cross-fit、double cross-fit。AIPW + cross-fit = DML，TMLE + cross-fit = CV-TMLE（投影片 92 那張 2×3 表）。</p>
 </div>
 <h2><span class="n">01</span>資料與問題<span class="slide">投影片 56–57</span></h2>
 <p>A = 1971–1982 間戒菸（qsmk），Y = 同期間體重變化（kg），X = 性別、種族、年齡、教育、吸菸強度、菸齡、運動、活動量、1971 年體重。只用 Y 沒缺的 1,566 人（complete case），所以 estimand 是「這 1,566 人」的 ATE，不是全美國人。</p>
@@ -313,7 +313,7 @@ grp <- data.frame(mean_quit = sapply(X[dat$A == 1, ], mean), mean_no_quit = sapp
 round(grp[order(-abs(grp$SMD)), ], 2)
 </script></div>
 <div class="look"><b>看什麼：</b><p>戒菸的人平均年紀比較大（SMD 0.28）、每天抽的菸比較少、白人比例比較高。年紀和體重變化本身有關——不調整就比，2.5 kg 這個數字混進了「年紀」的效果。</p></div>
-<h2><span class="n">03</span>先診斷 overlap，再選 estimator<span class="slide">投影片 67、77、93</span></h2>
+<h2><span class="n">03</span>先診斷 overlap，再選 estimator<span class="slide">投影片 66、75、91</span></h2>
 <div class="cell"><script type="text/r">
 set.seed(1)
 nf <- nhefs_nuisance(dat, dat, "hr")        # start with the Hernan-Robins GLM: fastest
@@ -336,7 +336,7 @@ axis(1); axis(2, at = seq_len(nrow(bt)), labels = bt$variable, tick = FALSE, col
 legend("bottomright", c("before weighting", "after IPW"), pch = 19, col = c(COL$red, COL$teal), bty = "n")
 </script></div>
 <div class="look"><b>看什麼：</b><p>紅點有 8 個超過 0.1（年紀最大，0.28），加權後藍點全部縮到 0.04 以下。balance 是 ĝ「有沒有把兩組變像」的檢查——它只看得到量到的變數，看不到沒量到的混雜（exchangeability 還是假設）。</p></div>
-<h2><span class="n">05</span>Full sample：同一組 nuisance，四種接法<span class="slide">投影片 81、83–84</span></h2>
+<h2><span class="n">05</span>Full sample：同一組 nuisance，四種接法<span class="slide">投影片 79、81–82</span></h2>
 <div class="cell"><script type="text/r">
 p_full <- nhefs_panel(dat, nf, "full sample")
 p_full[, -2]
@@ -344,7 +344,7 @@ plug <- est_plugin(nf)
 c(plugin = plug, AIPW_correction = est_aipw(dat, nf)[["est"]] - plug, TMLE_epsilon = est_tmle(dat, nf)[["eps"]])
 </script></div>
 <div class="look"><b>看什麼：</b><p>AIPW 和 TMLE 幾乎一樣（差在小數點第三位）：AIPW 直接把修正項加上去，TMLE 先把 Q̂ 往 H 的方向推 ε 再 plug in。Q̂ 本來就不差（Hernán–Robins 的模型），所以修正項和 ε 都很小——和 Lab 3 的糖果是同一個故事。</p></div>
-<h2><span class="n">06</span>換成 sl_lite，並做 cross-fitting（= DML / CV-TMLE）<span class="slide">投影片 94–95</span></h2>
+<h2><span class="n">06</span>換成 sl_lite，並做 cross-fitting（= DML / CV-TMLE）<span class="slide">投影片 92–93</span></h2>
 <p>每個人的 Q̂、ĝ 都由沒看過他的四折資料訓練；SuperLearner 的內層 CV 也放在外層的訓練折裡面。瀏覽器裡約 1 分鐘。</p>
 <div class="cell"><script type="text/r">
 nc <- nhefs_crossfit(dat, learner = "sl_lite", K = 5, seed = 1)
@@ -364,7 +364,7 @@ lab <- c(paste(ours$src, ours$estimator), paste(karim$src, ifelse(grepl("r=100",
 forest_plot(lab, c(ours$est, karim$est), c(ours$lo, karim$lo), c(ours$hi, karim$hi),
             col = c(rep(COL$teal, 8), rep(COL$red, 6)), ref = 3.4, ref_lab = "Hernan-Robins ~ 3.4", xlab = "difference in weight change (kg)")
 </script></div>
-<div class="look"><b>看什麼：</b><p>藍色是我們、紅色是論文。所有雙重穩健的估計都在 3.3–3.5 kg 之間；它們之間的差距（約 0.1）遠小於 CI 的半寬（約 0.9）。<b>選哪條路，沒有選對題目和食材重要。</b>投影片 84 說 AIPW 和 TMLE 的差別在有限樣本——在 overlap 好、Q̂ 不差的資料上，差別小到看不出來。</p></div>
+<div class="look"><b>看什麼：</b><p>藍色是我們、紅色是論文。所有雙重穩健的估計都在 3.3–3.5 kg 之間；它們之間的差距（約 0.1）遠小於 CI 的半寬（約 0.9）。<b>選哪條路，沒有選對題目和食材重要。</b>投影片 82 說 AIPW 和 TMLE 的差別在有限樣本——在 overlap 好、Q̂ 不差的資料上，差別小到看不出來。</p></div>
 <h2><span class="n">08</span>敏感度一：propensity 截斷門檻</h2>
 <p>Karim 的練習題：把 [0.025, 0.975] 換成更鬆或更緊的門檻，看幾個人被截到、答案動了多少。</p>
 <div class="cell"><script type="text/r">
@@ -381,7 +381,7 @@ lr <- t(sapply(c("mean", "main", "hr", "spline"), function(l) { a <- est_aipw(da
 round(lr, 3)
 </script></div>
 <div class="look"><b>看什麼：</b><p>「mean」那列 Q̂ 和 ĝ 都只有截距（兩個模型都錯），AIPW 就退回未調整的 2.5 kg——和 Lab 4 第 03 格右下角那格一樣：雙重穩健不是兩個都錯也能救。主效應、Hernán–Robins、樣條三個都在 3.38–3.43：只要模型夠用，答案就穩。</p></div>
-<h2><span class="n">10</span>敏感度三：換一個隨機切法，答案晃多少？<span class="slide">投影片 87、93</span></h2>
+<h2><span class="n">10</span>敏感度三：換一個隨機切法，答案晃多少？<span class="slide">投影片 85、91</span></h2>
 <p>同一份資料、不同的 fold。Karim 用 100 次取中位數；這裡先跑 10 次（可以自己改大）。</p>
 <div class="cell"><script type="text/r">
 reps <- 10
